@@ -163,7 +163,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     messageDiv.className = 'message ' + type;
   }
 
-  async function checkPunchStatus() {
+  async function checkPunchStatus(retryCount = 0) {
+    const maxRetries = 5;
+    const retryDelay = 1000;
+
     try {
       const tab = await findTeamSpiritTab();
       if (tab) {
@@ -171,15 +174,21 @@ document.addEventListener('DOMContentLoaded', async () => {
           if (chrome.runtime.lastError) {
             showStatus('ログイン済み', 'logged-in');
             updateButtonStates(null);
-            // Check stored working state for time display
             const { clockInTimestamp } = await chrome.storage.local.get('clockInTimestamp');
             await initializeTimeDisplay(!!clockInTimestamp);
             return;
           }
+
+          // If punch area not found and we have retries left, wait and retry
+          if (response && response.status === '打刻エリアが見つかりません' && retryCount < maxRetries) {
+            showStatus('読み込み中...', '');
+            setTimeout(() => checkPunchStatus(retryCount + 1), retryDelay);
+            return;
+          }
+
           if (response && response.status) {
             showStatus(response.status, response.isWorking ? 'working' : 'logged-in');
             updateButtonStates(response.isWorking);
-            // Initialize time display based on working status
             await initializeTimeDisplay(response.isWorking);
           } else {
             updateButtonStates(null);
@@ -189,7 +198,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       } else {
         showStatus('ログイン済み', 'logged-in');
         updateButtonStates(null);
-        // Check stored working state for time display
         const { clockInTimestamp } = await chrome.storage.local.get('clockInTimestamp');
         await initializeTimeDisplay(!!clockInTimestamp);
       }
@@ -553,6 +561,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     let autoOpenedTab = false;
 
     try {
+      const startTime = Date.now();
+      const elapsed = () => ((Date.now() - startTime) / 1000).toFixed(1) + 's';
+
       // Check if TeamSpirit tab exists
       tab = await findTeamSpiritTab();
 
@@ -580,10 +591,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       // If on login page, use that tab
       if (isOnLoginPage) {
-        showMessage('ログインページを検出...', 'info');
+        showMessage(`[${elapsed()}] ログインページを検出...`, 'info');
       } else {
         // Open login page directly (not TeamSpirit URL)
-        showMessage('ログインページを開いています...', 'info');
+        showMessage(`[${elapsed()}] ページを開いています...`, 'info');
         tab = await chrome.tabs.create({ url: MY_DOMAIN_LOGIN_URL, active: false });
         autoOpenedTab = true;
 
@@ -592,13 +603,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // Get updated tab info
         tab = await chrome.tabs.get(tab.id);
-        showMessage('ログインページ読み込み完了', 'info');
+        showMessage(`[${elapsed()}] タブ読み込み完了`, 'info');
       }
 
-      // Additional wait for login form to render
-      await new Promise(r => setTimeout(r, 2000));
-
-      // Verify we're on login page
+      // Verify we're on login page or auto-logged in
       tab = await chrome.tabs.get(tab.id);
       const isLoginPageNow = tab.url && (
         tab.url.includes('my.salesforce.com') ||
@@ -613,8 +621,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       }
 
-      // Fill in credentials
-      showMessage('ログイン情報を入力中...', 'info');
+      // Skip waitForLoginForm - sendLoginCommand has its own element waiting logic
+      // This saves several seconds of redundant waiting
+      showMessage(`[${elapsed()}] 認証情報入力中...`, 'info');
       const loginResult = await sendLoginCommand(tab.id, email, password);
 
       if (!loginResult.success) {
@@ -625,8 +634,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
 
       // Wait for redirect after login
-      showMessage('ログイン処理中...', 'info');
+      showMessage(`[${elapsed()}] リダイレクト待機中...`, 'info');
       await waitForLoginRedirect(tab.id);
+
+      // Wait for TeamSpirit page to fully load after redirect
+      showMessage(`[${elapsed()}] ページ読み込み中...`, 'info');
+      await waitForTabLoad(tab.id);
+      await waitForContentScript(tab.id);
+      showMessage(`[${elapsed()}] 完了`, 'info');
 
       // Verify we're now on TeamSpirit page
       tab = await chrome.tabs.get(tab.id);
@@ -791,6 +806,71 @@ document.addEventListener('DOMContentLoaded', async () => {
     return null;
   }
 
+  // Poll for login form elements to be ready
+  async function waitForLoginForm(tabId, maxWaitMs = 10000, showMessageFn = null) {
+    const startTime = Date.now();
+    const pollInterval = 300; // Check every 300ms
+    let pollCount = 0;
+
+    while (Date.now() - startTime < maxWaitMs) {
+      pollCount++;
+      try {
+        // Search in all frames including iframes
+        const results = await chrome.scripting.executeScript({
+          target: { tabId, allFrames: true },
+          func: () => {
+            // More flexible username/email field detection
+            const username = document.getElementById('username') ||
+                            document.querySelector('input[name="username"]') ||
+                            document.querySelector('input[name="email"]') ||
+                            document.querySelector('input[type="email"]') ||
+                            document.querySelector('input[autocomplete="username"]') ||
+                            document.querySelector('input[autocomplete="email"]') ||
+                            document.querySelector('input[placeholder*="メール"]') ||
+                            document.querySelector('input[placeholder*="mail" i]') ||
+                            document.querySelector('input[placeholder*="ユーザ"]');
+            const password = document.getElementById('password') ||
+                            document.querySelector('input[name="pw"]') ||
+                            document.querySelector('input[name="password"]') ||
+                            document.querySelector('input[type="password"]');
+            // Return detailed info
+            return {
+              found: !!(username && password),
+              hasUsername: !!username,
+              hasPassword: !!password,
+              frameCount: window.parent !== window ? 'iframe' : 'main'
+            };
+          }
+        });
+
+        // Check if any frame found the form
+        const foundInFrame = results?.find(r => r.result?.found === true);
+        if (foundInFrame) {
+          console.log('Login form ready after', Date.now() - startTime, 'ms');
+          return true;
+        }
+
+        // Show progress
+        if (showMessageFn && pollCount % 3 === 0) {
+          const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+          const info = results?.map(r => r.result?.frameCount + ':' + (r.result?.hasUsername ? 'U' : '-') + (r.result?.hasPassword ? 'P' : '-')).join(' ') || 'checking...';
+          showMessageFn(`[${elapsed}s] フォーム検索中... ${info}`, 'info');
+        }
+      } catch (e) {
+        // Script execution might fail if page is still loading
+        if (showMessageFn && pollCount % 3 === 0) {
+          const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+          showMessageFn(`[${elapsed}s] ページ読み込み中...`, 'info');
+        }
+      }
+
+      await new Promise(r => setTimeout(r, pollInterval));
+    }
+
+    console.log('Login form wait timed out, proceeding anyway');
+    return false;
+  }
+
   function waitForTabLoad(tabId) {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -801,7 +881,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (updatedTabId === tabId && changeInfo.status === 'complete') {
           clearTimeout(timeout);
           chrome.tabs.onUpdated.removeListener(listener);
-          setTimeout(resolve, 3000);
+          // Reduced from 3000ms to 500ms - will poll for elements instead
+          setTimeout(resolve, 500);
         }
       };
 
@@ -1069,7 +1150,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       }, 30000);
 
       let checkCount = 0;
-      const maxChecks = 20;
+      const maxChecks = 60; // More checks with shorter interval
 
       const checkPage = async () => {
         try {
@@ -1079,8 +1160,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                             (tab.title && tab.title.includes('Salesforce') && !tab.title.includes('Login'));
           if (isLoggedIn) {
             clearTimeout(timeout);
-            // Wait a bit for page to stabilize
-            await new Promise(r => setTimeout(r, 2000));
+            // Reduced stabilization wait from 2000ms to 500ms
+            await new Promise(r => setTimeout(r, 500));
             resolve();
             return;
           }
@@ -1092,14 +1173,16 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
           }
 
-          setTimeout(checkPage, 1500);
+          // Poll every 500ms instead of 1500ms
+          setTimeout(checkPage, 500);
         } catch (error) {
           clearTimeout(timeout);
           reject(error);
         }
       };
 
-      setTimeout(checkPage, 2000);
+      // Start checking immediately instead of waiting 2000ms
+      setTimeout(checkPage, 500);
     });
   }
 
