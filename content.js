@@ -358,7 +358,17 @@
   }
 
   function findPunchButtonByText(text) {
-    // Method 1: Direct button search
+    // Method 1: Search by specific TeamSpirit button IDs
+    if (text === '出勤') {
+      const btn = document.getElementById('btnStInput');
+      if (btn) return btn;
+    }
+    if (text === '退勤') {
+      const btn = document.getElementById('btnEtInput');
+      if (btn) return btn;
+    }
+
+    // Method 2: Direct button search by value attribute
     const buttons = document.querySelectorAll('button, input[type="button"], [role="button"]');
 
     for (const btn of buttons) {
@@ -368,7 +378,7 @@
       }
     }
 
-    // Method 2: Search in Lightning components
+    // Method 3: Search in Lightning components
     const lightningButtons = document.querySelectorAll('lightning-button, lightning-button-stateful');
     for (const btn of lightningButtons) {
       if (btn.textContent?.trim() === text) {
@@ -377,7 +387,7 @@
       }
     }
 
-    // Method 3: Search for elements with the text that might be clickable
+    // Method 4: Search for elements with the text that might be clickable
     const allElements = document.querySelectorAll('*');
     for (const el of allElements) {
       if (el.childElementCount === 0 && el.textContent?.trim() === text) {
