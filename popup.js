@@ -448,7 +448,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  async function waitForContentScript(tabId, maxRetries = 20) {
+  async function waitForContentScript(tabId, maxRetries = 10) {
     let retries = 0;
     let injected = false;
 
@@ -472,7 +472,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
 
       // Try to inject content script if not already tried
-      if (!injected && retries >= 3) {
+      if (!injected && retries >= 2) {
         try {
           await chrome.scripting.executeScript({
             target: { tabId },
@@ -486,34 +486,133 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
 
       retries++;
-      await new Promise(r => setTimeout(r, 1000));
+      await new Promise(r => setTimeout(r, 500));
     }
 
-    throw new Error('ページの読み込みに失敗しました');
+    // Don't throw error - we have fallbacks with direct script execution
+    console.log('Content script not available, will use direct execution');
   }
 
-  function getPageInfo(tabId) {
-    return new Promise((resolve) => {
-      chrome.tabs.sendMessage(tabId, { action: 'getPageInfo' }, (response) => {
-        if (chrome.runtime.lastError || !response) {
-          resolve({ isLoginPage: false, isTeamSpiritPage: false });
-        } else {
-          resolve(response);
-        }
-      });
-    });
-  }
-
-  function sendLoginCommand(tabId, email, password) {
-    return new Promise((resolve) => {
-      chrome.tabs.sendMessage(tabId, { action: 'login', email, password }, (response) => {
+  async function getPageInfo(tabId) {
+    // First try content script
+    const response = await new Promise((resolve) => {
+      chrome.tabs.sendMessage(tabId, { action: 'getPageInfo' }, (resp) => {
         if (chrome.runtime.lastError) {
-          resolve({ success: false, error: 'ログインページとの通信に失敗しました' });
+          resolve(null);
         } else {
-          resolve(response || { success: false, error: '応答がありません' });
+          resolve(resp);
         }
       });
     });
+
+    if (response) {
+      return response;
+    }
+
+    // Fallback: get info directly from tab and page
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      const url = tab.url || '';
+      const title = tab.title || '';
+
+      // Check by URL and title
+      const isLoginPage = url.includes('my.salesforce.com') ||
+                         url.includes('/login') ||
+                         title.includes('ログイン') ||
+                         title.toLowerCase().includes('login');
+
+      const isTeamSpiritPage = !isLoginPage && (
+                              url.includes('lightning.force.com') ||
+                              url.includes('lightning/page'));
+
+      return {
+        isLoginPage,
+        isTeamSpiritPage,
+        pageType: isLoginPage ? 'login' : (isTeamSpiritPage ? 'teamspirit' : 'unknown'),
+        url,
+        title
+      };
+    } catch (e) {
+      return { isLoginPage: false, isTeamSpiritPage: false, pageType: 'unknown' };
+    }
+  }
+
+  async function sendLoginCommand(tabId, email, password) {
+    try {
+      // First try content script message
+      const response = await new Promise((resolve) => {
+        chrome.tabs.sendMessage(tabId, { action: 'login', email, password }, (resp) => {
+          if (chrome.runtime.lastError) {
+            resolve(null);
+          } else {
+            resolve(resp);
+          }
+        });
+      });
+
+      if (response && response.success !== undefined) {
+        return response;
+      }
+
+      // Fallback: execute script directly
+      console.log('Using direct script execution for login');
+      const results = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: (email, password) => {
+          try {
+            // Find username field
+            const usernameField = document.getElementById('username') ||
+                                 document.querySelector('input[name="username"]') ||
+                                 document.querySelector('input[type="email"]') ||
+                                 document.querySelector('input[autocomplete="username"]');
+
+            // Find password field
+            const passwordField = document.getElementById('password') ||
+                                 document.querySelector('input[name="pw"]') ||
+                                 document.querySelector('input[type="password"]');
+
+            // Find login button
+            const loginButton = document.getElementById('Login') ||
+                               document.querySelector('input[name="Login"]') ||
+                               document.querySelector('input[type="submit"]') ||
+                               document.querySelector('button[type="submit"]');
+
+            if (!usernameField) {
+              return { success: false, error: 'ユーザー名フィールドが見つかりません' };
+            }
+            if (!passwordField) {
+              return { success: false, error: 'パスワードフィールドが見つかりません' };
+            }
+            if (!loginButton) {
+              return { success: false, error: 'ログインボタンが見つかりません' };
+            }
+
+            // Fill in credentials
+            usernameField.value = email;
+            usernameField.dispatchEvent(new Event('input', { bubbles: true }));
+
+            passwordField.value = password;
+            passwordField.dispatchEvent(new Event('input', { bubbles: true }));
+
+            // Click login button
+            loginButton.click();
+
+            return { success: true };
+          } catch (e) {
+            return { success: false, error: e.message };
+          }
+        },
+        args: [email, password]
+      });
+
+      if (results && results[0] && results[0].result) {
+        return results[0].result;
+      }
+
+      return { success: false, error: 'スクリプト実行に失敗しました' };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
   }
 
   function waitForLoginRedirect(tabId) {
