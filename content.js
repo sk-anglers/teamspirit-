@@ -19,20 +19,26 @@
     const title = document.title || '';
 
     // Check for login page indicators
-    if (url.includes('login.salesforce.com') ||
+    const isLoginPage =
+        url.includes('login.salesforce.com') ||
+        url.includes('my.salesforce.com') ||
         url.includes('/login') ||
         url.includes('secur/frontdoor') ||
+        title.includes('ログイン') ||
         title.toLowerCase().includes('login') ||
         document.querySelector('#username') ||
         document.querySelector('input[name="username"]') ||
-        document.querySelector('#password')) {
+        document.querySelector('#password') ||
+        document.querySelector('input[type="password"]');
+
+    if (isLoginPage) {
       return 'login';
     }
 
     // Check for TeamSpirit/Salesforce main page
     if (url.includes('lightning.force.com') ||
         url.includes('lightning/page') ||
-        (title.includes('Salesforce') && !title.toLowerCase().includes('login'))) {
+        (title.includes('Salesforce') && !title.includes('ログイン') && !title.toLowerCase().includes('login'))) {
       return 'teamspirit';
     }
 

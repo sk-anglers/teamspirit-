@@ -88,10 +88,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // First check if there's already a TeamSpirit tab open
     const existingTab = await findTeamSpiritTab();
-    const isLoggedIn = existingTab && (
-      (existingTab.url && existingTab.url.includes('lightning.force.com') && !existingTab.url.includes('login')) ||
+
+    // Check if it's a login page (not logged in)
+    const isLoginPage = existingTab && (
+      (existingTab.url && (existingTab.url.includes('my.salesforce.com') || existingTab.url.includes('/login'))) ||
+      (existingTab.title && (existingTab.title.includes('ログイン') || existingTab.title.toLowerCase().includes('login')))
+    );
+
+    // Check if logged in (TeamSpirit main page, not login page)
+    const isLoggedIn = existingTab && !isLoginPage && (
+      (existingTab.url && existingTab.url.includes('lightning.force.com')) ||
       (existingTab.url && existingTab.url.includes('lightning/page')) ||
-      (existingTab.title && existingTab.title.includes('Salesforce') && !existingTab.title.includes('Login'))
+      (existingTab.title && existingTab.title.includes('Salesforce'))
     );
 
     if (isLoggedIn) {
@@ -209,11 +217,16 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Check if TeamSpirit tab exists
       tab = await findTeamSpiritTab();
 
+      // Check if it's a login page
+      const isOnLoginPage = tab && (
+        (tab.url && (tab.url.includes('my.salesforce.com') || tab.url.includes('/login'))) ||
+        (tab.title && (tab.title.includes('ログイン') || tab.title.toLowerCase().includes('login')))
+      );
+
       // If tab exists and is on TeamSpirit page (not login), user is already logged in
-      const isAlreadyLoggedIn = tab && (
-        (tab.url && tab.url.includes('lightning.force.com') && !tab.url.includes('login')) ||
-        (tab.url && tab.url.includes('lightning/page')) ||
-        (tab.title && tab.title.includes('Salesforce') && !tab.title.includes('Login'))
+      const isAlreadyLoggedIn = tab && !isOnLoginPage && (
+        (tab.url && tab.url.includes('lightning.force.com')) ||
+        (tab.url && tab.url.includes('lightning/page'))
       );
 
       if (isAlreadyLoggedIn) {
@@ -367,8 +380,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     let tabs = await chrome.tabs.query({
       url: [
         'https://teamspirit-74532.lightning.force.com/*',
+        'https://teamspirit-74532.my.salesforce.com/*',
         'https://login.salesforce.com/*',
         'https://*.salesforce.com/*',
+        'https://*.my.salesforce.com/*',
         'https://*.force.com/*'
       ]
     });
