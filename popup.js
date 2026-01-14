@@ -276,19 +276,77 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Update current time
     currentTimeEl.textContent = formatTime(new Date());
 
-    // Update working time if clocked in
-    chrome.storage.local.get(['clockInTimestamp'], (result) => {
+    // Update working time if clocked in, and update summary in real-time
+    chrome.storage.local.get(['clockInTimestamp', 'workSummary'], (result) => {
       if (result.clockInTimestamp) {
         const clockInDate = new Date(result.clockInTimestamp);
         clockInTimeEl.textContent = formatTimeShort(clockInDate);
 
         const workingMs = Date.now() - result.clockInTimestamp;
         workingTimeEl.textContent = formatDuration(workingMs);
+
+        // Update summary in real-time if we have summary data
+        if (result.workSummary) {
+          updateSummaryRealTime(result.workSummary, workingMs);
+        }
       } else {
         clockInTimeEl.textContent = '--:--';
         workingTimeEl.textContent = '--:--:--';
       }
     });
+  }
+
+  // Update summary values in real-time by adding today's working time
+  function updateSummaryRealTime(summary, todayWorkingMs) {
+    const scheduledMinutes = parseTimeToMinutes(summary.scheduledHours);
+    const baseTotalMinutes = parseTimeToMinutes(summary.totalHours);
+
+    if (scheduledMinutes === null || baseTotalMinutes === null) return;
+
+    // Add today's working time to base total
+    const todayWorkingMinutes = Math.floor(todayWorkingMs / 60000);
+    const realTimeTotalMinutes = baseTotalMinutes + todayWorkingMinutes;
+
+    // Update total hours display
+    totalHoursEl.textContent = formatMinutesToTime(realTimeTotalMinutes);
+
+    // Calculate and update over/under hours
+    const overUnderMinutes = realTimeTotalMinutes - scheduledMinutes;
+    const overUnderStr = formatMinutesToTime(overUnderMinutes);
+    overUnderHoursEl.textContent = overUnderMinutes >= 0 ? `+${overUnderStr}` : overUnderStr;
+
+    // Style over/under hours
+    if (overUnderMinutes < 0) {
+      overUnderHoursEl.classList.add('negative');
+      overUnderHoursEl.classList.remove('positive');
+    } else if (overUnderMinutes > 0) {
+      overUnderHoursEl.classList.add('positive');
+      overUnderHoursEl.classList.remove('negative');
+    } else {
+      overUnderHoursEl.classList.remove('negative', 'positive');
+    }
+
+    // Calculate remaining days
+    const scheduledDays = parseInt(summary.scheduledDays, 10);
+    const actualDays = parseInt(summary.actualDays, 10);
+
+    if (!isNaN(scheduledDays) && !isNaN(actualDays)) {
+      const remainingDays = scheduledDays - actualDays;
+
+      // Update required per day
+      if (remainingDays > 0) {
+        const remainingMinutes = scheduledMinutes - realTimeTotalMinutes;
+        if (remainingMinutes > 0) {
+          const requiredMinutesPerDay = Math.ceil(remainingMinutes / remainingDays);
+          requiredPerDayEl.textContent = formatMinutesToTime(requiredMinutesPerDay);
+          requiredPerDayEl.classList.remove('negative', 'positive');
+        } else {
+          requiredPerDayEl.textContent = '達成済み';
+          requiredPerDayEl.classList.add('positive');
+          requiredPerDayEl.classList.remove('negative');
+        }
+      }
+    }
   }
 
   // Start time update interval
