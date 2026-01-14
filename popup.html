@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TeamSpirit Quick Punch</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <h1>TeamSpirit</h1>
+
+    <div class="status" id="status">
+      <span class="status-text">状態を確認中...</span>
+    </div>
+
+    <div class="location-selector">
+      <label for="location">勤務場所:</label>
+      <select id="location">
+        <option value="remote">リモート</option>
+        <option value="office">オフィス</option>
+        <option value="direct-to-office">直行→オフィス</option>
+        <option value="office-to-direct">オフィス→直帰</option>
+        <option value="direct">直行直帰</option>
+      </select>
+    </div>
+
+    <div class="buttons">
+      <button id="clockIn" class="btn btn-in">
+        出勤
+      </button>
+      <button id="clockOut" class="btn btn-out">
+        退勤
+      </button>
+    </div>
+
+    <div class="message" id="message"></div>
+
+    <div class="footer">
+      <a href="#" id="openTeamSpirit">TeamSpiritを開く</a>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
