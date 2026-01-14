@@ -1,5 +1,6 @@
 const TEAMSPIRIT_URL = 'https://teamspirit-74532.lightning.force.com/lightning/page/home';
 const LOGIN_URL = 'https://login.salesforce.com/';
+const MY_DOMAIN_LOGIN_URL = 'https://teamspirit-74532.my.salesforce.com/';
 
 document.addEventListener('DOMContentLoaded', async () => {
   // Elements
@@ -246,60 +247,75 @@ document.addEventListener('DOMContentLoaded', async () => {
         return { success: true };
       }
 
-      if (!tab) {
-        // Open TeamSpirit - it will redirect to login if not authenticated
-        showMessage('TeamSpiritを開いています...', 'info');
-        tab = await chrome.tabs.create({ url: TEAMSPIRIT_URL, active: false });
+      // If on login page, use that tab
+      if (isOnLoginPage) {
+        showMessage('ログインページを検出...', 'info');
+      } else {
+        // Open login page directly (not TeamSpirit URL)
+        showMessage('ログインページを開いています...', 'info');
+        tab = await chrome.tabs.create({ url: MY_DOMAIN_LOGIN_URL, active: false });
         autoOpenedTab = true;
 
         // Wait for the tab to load
         await waitForTabLoad(tab.id);
 
-        // Get updated tab info after redirect
+        // Get updated tab info
         tab = await chrome.tabs.get(tab.id);
-        showMessage('ページ読み込み完了: ' + (tab.url || '').substring(0, 50), 'info');
+        showMessage('ログインページ読み込み完了', 'info');
       }
 
-      // Check if now on login page after redirect
-      const isNowOnLoginPage = tab && (
-        (tab.url && tab.url.includes('my.salesforce.com')) ||
-        (tab.title && tab.title.includes('ログイン'))
+      // Additional wait for login form to render
+      await new Promise(r => setTimeout(r, 2000));
+
+      // Verify we're on login page
+      tab = await chrome.tabs.get(tab.id);
+      const isLoginPageNow = tab.url && (
+        tab.url.includes('my.salesforce.com') ||
+        tab.url.includes('login.salesforce.com') ||
+        tab.url.includes('/login')
       );
 
-      // Wait for content script to be ready
-      showMessage('準備中...', 'info');
-      await waitForContentScript(tab.id);
-
-      // Check if we're on login page or already logged in
-      const pageInfo = await getPageInfo(tab.id);
-      showMessage('ページ検出: ' + (pageInfo.pageType || 'unknown'), 'info');
-
-      if (pageInfo.isLoginPage) {
-        // We're on login page, fill in credentials
-        showMessage('ログイン情報を入力中...', 'info');
-        const loginResult = await sendLoginCommand(tab.id, email, password);
-
-        if (!loginResult.success) {
-          if (autoOpenedTab) {
-            await chrome.tabs.remove(tab.id);
-          }
-          return loginResult;
-        }
-
-        // Wait for redirect after login
-        showMessage('ログイン処理中...', 'info');
-        await waitForLoginRedirect(tab.id);
-
-        // Verify we're now on TeamSpirit page
-        const newPageInfo = await getPageInfo(tab.id);
-        if (newPageInfo.isTeamSpiritPage) {
+      if (!isLoginPageNow) {
+        // Might have auto-logged in via session
+        if (tab.url && tab.url.includes('lightning.force.com')) {
           return { success: true };
-        } else if (newPageInfo.isLoginPage) {
-          return { success: false, error: 'ログインに失敗しました。認証情報を確認してください。' };
         }
-      } else if (pageInfo.isTeamSpiritPage) {
-        // Already logged in
+      }
+
+      // Fill in credentials
+      showMessage('ログイン情報を入力中...', 'info');
+      const loginResult = await sendLoginCommand(tab.id, email, password);
+
+      if (!loginResult.success) {
+        if (autoOpenedTab) {
+          try { await chrome.tabs.remove(tab.id); } catch(e) {}
+        }
+        return loginResult;
+      }
+
+      // Wait for redirect after login
+      showMessage('ログイン処理中...', 'info');
+      await waitForLoginRedirect(tab.id);
+
+      // Verify we're now on TeamSpirit page
+      tab = await chrome.tabs.get(tab.id);
+      const isLoggedInNow = tab.url && (
+        tab.url.includes('lightning.force.com') ||
+        tab.url.includes('lightning/page')
+      );
+
+      if (isLoggedInNow) {
         return { success: true };
+      }
+
+      // Check if still on login page (login failed)
+      const stillOnLogin = tab.url && (
+        tab.url.includes('my.salesforce.com') ||
+        tab.url.includes('login.salesforce.com')
+      );
+
+      if (stillOnLogin) {
+        return { success: false, error: 'ログインに失敗しました。認証情報を確認してください。' };
       }
 
       return { success: true };
@@ -580,153 +596,110 @@ document.addEventListener('DOMContentLoaded', async () => {
         return { success: false, error: 'ログインページのURLが無効です' };
       }
 
-      // Wait a bit for page to fully load (dynamic content)
-      await new Promise(r => setTimeout(r, 2000));
-
+      // Execute login script with retry logic
       const results = await chrome.scripting.executeScript({
-        target: { tabId, allFrames: true },
-        func: (email, password) => {
+        target: { tabId },
+        func: async (email, password) => {
+          // Helper function to wait for element
+          const waitForElement = (selector, maxWait = 10000) => {
+            return new Promise((resolve) => {
+              const el = document.querySelector(selector);
+              if (el) {
+                resolve(el);
+                return;
+              }
+
+              const observer = new MutationObserver(() => {
+                const el = document.querySelector(selector);
+                if (el) {
+                  observer.disconnect();
+                  resolve(el);
+                }
+              });
+
+              observer.observe(document.body || document.documentElement, {
+                childList: true,
+                subtree: true
+              });
+
+              setTimeout(() => {
+                observer.disconnect();
+                resolve(document.querySelector(selector));
+              }, maxWait);
+            });
+          };
+
           try {
-            // Helper function to find element in document and iframes
-            const findInAllFrames = (selector) => {
-              // Try main document first
-              let el = document.querySelector(selector);
-              if (el) return el;
+            console.log('Login script starting on:', window.location.href);
 
-              // Try iframes
-              const iframes = document.querySelectorAll('iframe');
-              for (const iframe of iframes) {
-                try {
-                  const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-                  if (iframeDoc) {
-                    el = iframeDoc.querySelector(selector);
-                    if (el) return el;
-                  }
-                } catch (e) {
-                  // Cross-origin iframe, skip
-                }
-              }
-              return null;
-            };
+            // Wait for username field to appear (up to 10 seconds)
+            let usernameField = await waitForElement('#username', 10000);
 
-            // Helper to get all inputs from all frames
-            const getAllInputs = () => {
-              const inputs = Array.from(document.querySelectorAll('input'));
-              const iframes = document.querySelectorAll('iframe');
-              for (const iframe of iframes) {
-                try {
-                  const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-                  if (iframeDoc) {
-                    inputs.push(...Array.from(iframeDoc.querySelectorAll('input')));
-                  }
-                } catch (e) {
-                  // Cross-origin iframe, skip
-                }
-              }
-              return inputs;
-            };
-
-            // Find all input fields for debugging
-            const allInputs = getAllInputs();
-            console.log('Found inputs:', allInputs.map(i => ({
-              id: i.id, name: i.name, type: i.type, placeholder: i.placeholder, className: i.className
-            })));
-
-            // Find username field - try many selectors
-            let usernameField = findInAllFrames('#username') ||
-                               findInAllFrames('#user') ||
-                               findInAllFrames('input[name="username"]') ||
-                               findInAllFrames('input[name="user"]') ||
-                               findInAllFrames('input[name="email"]') ||
-                               findInAllFrames('input[name="login"]') ||
-                               findInAllFrames('input[type="email"]') ||
-                               findInAllFrames('input[autocomplete="username"]') ||
-                               findInAllFrames('input[autocomplete="email"]') ||
-                               findInAllFrames('input.username') ||
-                               findInAllFrames('input.input');
-
-            // If still not found, try to find first text input
+            // If not found by ID, try other selectors
             if (!usernameField) {
-              usernameField = allInputs.find(i =>
-                (i.type === 'text' || i.type === 'email' || !i.type) &&
-                i.type !== 'password' &&
-                i.type !== 'hidden' &&
-                i.type !== 'submit' &&
-                i.offsetParent !== null
-              );
+              usernameField = document.querySelector('input[name="username"]') ||
+                             document.querySelector('input[type="email"]') ||
+                             document.querySelector('input[autocomplete="username"]');
             }
 
             // Find password field
-            let passwordField = findInAllFrames('#password') ||
-                               findInAllFrames('#pw') ||
-                               findInAllFrames('input[name="pw"]') ||
-                               findInAllFrames('input[name="password"]') ||
-                               findInAllFrames('input[type="password"]') ||
-                               findInAllFrames('input[autocomplete="current-password"]');
+            let passwordField = document.querySelector('#password') ||
+                               document.querySelector('input[name="pw"]') ||
+                               document.querySelector('input[name="password"]') ||
+                               document.querySelector('input[type="password"]');
 
-            // If still not found, get first password type input
-            if (!passwordField) {
-              passwordField = allInputs.find(i => i.type === 'password');
-            }
+            // Find login button
+            let loginButton = document.querySelector('#Login') ||
+                             document.querySelector('input[name="Login"]') ||
+                             document.querySelector('input[type="submit"]') ||
+                             document.querySelector('button[type="submit"]');
 
-            // Find login button - try many selectors
-            let loginButton = findInAllFrames('#Login') ||
-                             findInAllFrames('#login') ||
-                             findInAllFrames('input[name="Login"]') ||
-                             findInAllFrames('input[type="submit"]') ||
-                             findInAllFrames('button[type="submit"]') ||
-                             findInAllFrames('button[name="login"]');
-
-            // Find button with login text
-            if (!loginButton) {
-              const allButtons = [...document.querySelectorAll('button, input[type="button"], input[type="submit"]')];
-              const iframes = document.querySelectorAll('iframe');
-              for (const iframe of iframes) {
-                try {
-                  const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-                  if (iframeDoc) {
-                    allButtons.push(...iframeDoc.querySelectorAll('button, input[type="button"], input[type="submit"]'));
-                  }
-                } catch (e) {}
-              }
-              loginButton = allButtons.find(
-                b => (b.textContent || b.value || '').includes('ログイン') ||
-                     (b.textContent || b.value || '').toLowerCase().includes('log in') ||
-                     (b.textContent || b.value || '').toLowerCase() === 'login'
-              );
-            }
-
+            // Debug logging
+            const allInputs = Array.from(document.querySelectorAll('input'));
+            console.log('Page URL:', window.location.href);
+            console.log('All inputs found:', allInputs.map(i => ({
+              id: i.id, name: i.name, type: i.type
+            })));
             console.log('Found elements:', {
-              username: !!usernameField,
-              password: !!passwordField,
-              loginButton: !!loginButton
+              username: usernameField ? `#${usernameField.id || usernameField.name}` : null,
+              password: passwordField ? `#${passwordField.id || passwordField.name}` : null,
+              loginButton: loginButton ? `#${loginButton.id || loginButton.name}` : null
             });
 
             if (!usernameField) {
-              // Return detailed error with found inputs info
               const inputInfo = allInputs.slice(0, 5).map(i => `${i.type || 'text'}:${i.name || i.id || 'no-name'}`).join(', ');
-              return { success: false, error: `ユーザー名フィールドが見つかりません。入力フィールド: ${allInputs.length}個 [${inputInfo}]` };
+              return { success: false, error: `ユーザー名フィールドが見つかりません。URL: ${window.location.hostname}, 入力フィールド: ${allInputs.length}個 [${inputInfo}]` };
             }
-
-            // Fill username
-            usernameField.focus();
-            usernameField.value = email;
-            usernameField.dispatchEvent(new Event('input', { bubbles: true }));
-            usernameField.dispatchEvent(new Event('change', { bubbles: true }));
 
             if (!passwordField) {
               return { success: false, error: 'パスワードフィールドが見つかりません' };
             }
 
+            // Fill username
+            usernameField.focus();
+            usernameField.value = '';
+            usernameField.value = email;
+            usernameField.dispatchEvent(new Event('input', { bubbles: true }));
+            usernameField.dispatchEvent(new Event('change', { bubbles: true }));
+
+            // Small delay
+            await new Promise(r => setTimeout(r, 300));
+
             // Fill password
             passwordField.focus();
+            passwordField.value = '';
             passwordField.value = password;
             passwordField.dispatchEvent(new Event('input', { bubbles: true }));
             passwordField.dispatchEvent(new Event('change', { bubbles: true }));
 
+            // Small delay
+            await new Promise(r => setTimeout(r, 300));
+
             if (!loginButton) {
-              // Try to find form and submit it
-              const form = passwordField.closest('form') || usernameField.closest('form');
+              // Try to find and submit form
+              const form = document.querySelector('#theloginform') ||
+                          passwordField.closest('form') ||
+                          usernameField.closest('form');
               if (form) {
                 console.log('Submitting form directly');
                 form.submit();
@@ -736,36 +709,21 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
 
             // Click login button
-            console.log('Clicking login button:', loginButton);
+            console.log('Clicking login button');
             loginButton.focus();
             loginButton.click();
 
             return { success: true };
           } catch (e) {
+            console.error('Login error:', e);
             return { success: false, error: e.message };
           }
         },
         args: [email, password]
       });
 
-      // Check results from all frames - look for success or meaningful error
-      if (results && results.length > 0) {
-        // First, look for a successful result
-        const successResult = results.find(r => r.result && r.result.success === true);
-        if (successResult) {
-          return successResult.result;
-        }
-
-        // If no success, return the most informative error
-        const errorResult = results.find(r => r.result && r.result.error);
-        if (errorResult) {
-          return errorResult.result;
-        }
-
-        // Return first result if available
-        if (results[0] && results[0].result) {
-          return results[0].result;
-        }
+      if (results && results[0] && results[0].result) {
+        return results[0].result;
       }
 
       return { success: false, error: 'スクリプト実行に失敗しました' };
