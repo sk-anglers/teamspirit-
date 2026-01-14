@@ -88,8 +88,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // First check if there's already a TeamSpirit tab open
     const existingTab = await findTeamSpiritTab();
-    if (existingTab && existingTab.url && existingTab.url.includes('lightning.force.com')) {
-      // TeamSpirit is already open, user is likely logged in
+    const isLoggedIn = existingTab && (
+      (existingTab.url && existingTab.url.includes('lightning.force.com') && !existingTab.url.includes('login')) ||
+      (existingTab.url && existingTab.url.includes('lightning/page')) ||
+      (existingTab.title && existingTab.title.includes('Salesforce') && !existingTab.title.includes('Login'))
+    );
+
+    if (isLoggedIn) {
+      // TeamSpirit is already open and logged in
       await chrome.storage.local.set({ isLoggedIn: true });
       showPunchSection();
       showStatus('ログイン済み', 'logged-in');
@@ -204,7 +210,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       tab = await findTeamSpiritTab();
 
       // If tab exists and is on TeamSpirit page (not login), user is already logged in
-      if (tab && tab.url && tab.url.includes('lightning.force.com') && !tab.url.includes('login')) {
+      const isAlreadyLoggedIn = tab && (
+        (tab.url && tab.url.includes('lightning.force.com') && !tab.url.includes('login')) ||
+        (tab.url && tab.url.includes('lightning/page')) ||
+        (tab.title && tab.title.includes('Salesforce') && !tab.title.includes('Login'))
+      );
+
+      if (isAlreadyLoggedIn) {
         showMessage('既にログイン済みです', 'success');
         return { success: true };
       }
@@ -351,14 +363,32 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   async function findTeamSpiritTab() {
-    const tabs = await chrome.tabs.query({
+    // First try specific URL pattern
+    let tabs = await chrome.tabs.query({
       url: [
         'https://teamspirit-74532.lightning.force.com/*',
         'https://login.salesforce.com/*',
-        'https://*.salesforce.com/*'
+        'https://*.salesforce.com/*',
+        'https://*.force.com/*'
       ]
     });
-    return tabs[0] || null;
+
+    if (tabs.length > 0) {
+      return tabs[0];
+    }
+
+    // Fallback: search all tabs by title or URL content
+    const allTabs = await chrome.tabs.query({});
+    for (const tab of allTabs) {
+      if (tab.title && (tab.title.includes('Salesforce') || tab.title.includes('TeamSpirit'))) {
+        return tab;
+      }
+      if (tab.url && (tab.url.includes('salesforce') || tab.url.includes('force.com'))) {
+        return tab;
+      }
+    }
+
+    return null;
   }
 
   function waitForTabLoad(tabId) {
@@ -459,10 +489,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       const checkPage = async () => {
         try {
           const tab = await chrome.tabs.get(tabId);
-          if (tab.url && tab.url.includes('lightning.force.com')) {
+          // Check by URL or title
+          const isLoggedIn = (tab.url && (tab.url.includes('lightning.force.com') || tab.url.includes('lightning/page'))) ||
+                            (tab.title && tab.title.includes('Salesforce') && !tab.title.includes('Login'));
+          if (isLoggedIn) {
             clearTimeout(timeout);
-            // Wait for page to fully load
-            await waitForTabLoad(tabId);
+            // Wait a bit for page to stabilize
+            await new Promise(r => setTimeout(r, 2000));
             resolve();
             return;
           }
