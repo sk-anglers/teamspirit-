@@ -662,20 +662,32 @@ document.addEventListener('DOMContentLoaded', async () => {
       return;
     }
 
+    // Parse time values first
+    const scheduledMinutes = parseTimeToMinutes(summary.scheduledHours);
+    const totalMinutes = parseTimeToMinutes(summary.totalHours);
+
     // Display basic values
     scheduledHoursEl.textContent = summary.scheduledHours || '--:--';
     totalHoursEl.textContent = summary.totalHours || '--:--';
-    overUnderHoursEl.textContent = summary.overUnderHours || '--:--';
 
-    // Style over/under hours (negative = red, positive = green)
-    const overUnder = summary.overUnderHours || '';
-    if (overUnder.startsWith('-')) {
-      overUnderHoursEl.classList.add('negative');
-      overUnderHoursEl.classList.remove('positive');
-    } else if (overUnder && overUnder !== '--:--' && overUnder !== '0:00') {
-      overUnderHoursEl.classList.add('positive');
-      overUnderHoursEl.classList.remove('negative');
+    // Calculate and display over/under hours (総労働時間 - 所定労働時間)
+    if (scheduledMinutes !== null && totalMinutes !== null) {
+      const overUnderMinutes = totalMinutes - scheduledMinutes;
+      const overUnderStr = formatMinutesToTime(overUnderMinutes);
+      overUnderHoursEl.textContent = overUnderMinutes >= 0 ? `+${overUnderStr}` : overUnderStr;
+
+      // Style over/under hours (negative = red, positive = green)
+      if (overUnderMinutes < 0) {
+        overUnderHoursEl.classList.add('negative');
+        overUnderHoursEl.classList.remove('positive');
+      } else if (overUnderMinutes > 0) {
+        overUnderHoursEl.classList.add('positive');
+        overUnderHoursEl.classList.remove('negative');
+      } else {
+        overUnderHoursEl.classList.remove('negative', 'positive');
+      }
     } else {
+      overUnderHoursEl.textContent = '--:--';
       overUnderHoursEl.classList.remove('negative', 'positive');
     }
 
@@ -692,8 +704,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // Calculate required hours per day based on (所定労働時間 - 総労働時間) / 残り日数
-    const scheduledMinutes = parseTimeToMinutes(summary.scheduledHours);
-    const totalMinutes = parseTimeToMinutes(summary.totalHours);
 
     if (scheduledMinutes !== null && totalMinutes !== null && remainingDays !== null && remainingDays > 0) {
       const remainingMinutes = scheduledMinutes - totalMinutes;
