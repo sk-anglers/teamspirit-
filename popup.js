@@ -580,45 +580,164 @@ document.addEventListener('DOMContentLoaded', async () => {
         return { success: false, error: 'ログインページのURLが無効です' };
       }
 
+      // Wait a bit for page to fully load (dynamic content)
+      await new Promise(r => setTimeout(r, 2000));
+
       const results = await chrome.scripting.executeScript({
-        target: { tabId },
+        target: { tabId, allFrames: true },
         func: (email, password) => {
           try {
-            // Find username field
-            const usernameField = document.getElementById('username') ||
-                                 document.querySelector('input[name="username"]') ||
-                                 document.querySelector('input[type="email"]') ||
-                                 document.querySelector('input[autocomplete="username"]');
+            // Helper function to find element in document and iframes
+            const findInAllFrames = (selector) => {
+              // Try main document first
+              let el = document.querySelector(selector);
+              if (el) return el;
+
+              // Try iframes
+              const iframes = document.querySelectorAll('iframe');
+              for (const iframe of iframes) {
+                try {
+                  const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+                  if (iframeDoc) {
+                    el = iframeDoc.querySelector(selector);
+                    if (el) return el;
+                  }
+                } catch (e) {
+                  // Cross-origin iframe, skip
+                }
+              }
+              return null;
+            };
+
+            // Helper to get all inputs from all frames
+            const getAllInputs = () => {
+              const inputs = Array.from(document.querySelectorAll('input'));
+              const iframes = document.querySelectorAll('iframe');
+              for (const iframe of iframes) {
+                try {
+                  const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+                  if (iframeDoc) {
+                    inputs.push(...Array.from(iframeDoc.querySelectorAll('input')));
+                  }
+                } catch (e) {
+                  // Cross-origin iframe, skip
+                }
+              }
+              return inputs;
+            };
+
+            // Find all input fields for debugging
+            const allInputs = getAllInputs();
+            console.log('Found inputs:', allInputs.map(i => ({
+              id: i.id, name: i.name, type: i.type, placeholder: i.placeholder, className: i.className
+            })));
+
+            // Find username field - try many selectors
+            let usernameField = findInAllFrames('#username') ||
+                               findInAllFrames('#user') ||
+                               findInAllFrames('input[name="username"]') ||
+                               findInAllFrames('input[name="user"]') ||
+                               findInAllFrames('input[name="email"]') ||
+                               findInAllFrames('input[name="login"]') ||
+                               findInAllFrames('input[type="email"]') ||
+                               findInAllFrames('input[autocomplete="username"]') ||
+                               findInAllFrames('input[autocomplete="email"]') ||
+                               findInAllFrames('input.username') ||
+                               findInAllFrames('input.input');
+
+            // If still not found, try to find first text input
+            if (!usernameField) {
+              usernameField = allInputs.find(i =>
+                (i.type === 'text' || i.type === 'email' || !i.type) &&
+                i.type !== 'password' &&
+                i.type !== 'hidden' &&
+                i.type !== 'submit' &&
+                i.offsetParent !== null
+              );
+            }
 
             // Find password field
-            const passwordField = document.getElementById('password') ||
-                                 document.querySelector('input[name="pw"]') ||
-                                 document.querySelector('input[type="password"]');
+            let passwordField = findInAllFrames('#password') ||
+                               findInAllFrames('#pw') ||
+                               findInAllFrames('input[name="pw"]') ||
+                               findInAllFrames('input[name="password"]') ||
+                               findInAllFrames('input[type="password"]') ||
+                               findInAllFrames('input[autocomplete="current-password"]');
 
-            // Find login button
-            const loginButton = document.getElementById('Login') ||
-                               document.querySelector('input[name="Login"]') ||
-                               document.querySelector('input[type="submit"]') ||
-                               document.querySelector('button[type="submit"]');
+            // If still not found, get first password type input
+            if (!passwordField) {
+              passwordField = allInputs.find(i => i.type === 'password');
+            }
+
+            // Find login button - try many selectors
+            let loginButton = findInAllFrames('#Login') ||
+                             findInAllFrames('#login') ||
+                             findInAllFrames('input[name="Login"]') ||
+                             findInAllFrames('input[type="submit"]') ||
+                             findInAllFrames('button[type="submit"]') ||
+                             findInAllFrames('button[name="login"]');
+
+            // Find button with login text
+            if (!loginButton) {
+              const allButtons = [...document.querySelectorAll('button, input[type="button"], input[type="submit"]')];
+              const iframes = document.querySelectorAll('iframe');
+              for (const iframe of iframes) {
+                try {
+                  const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+                  if (iframeDoc) {
+                    allButtons.push(...iframeDoc.querySelectorAll('button, input[type="button"], input[type="submit"]'));
+                  }
+                } catch (e) {}
+              }
+              loginButton = allButtons.find(
+                b => (b.textContent || b.value || '').includes('ログイン') ||
+                     (b.textContent || b.value || '').toLowerCase().includes('log in') ||
+                     (b.textContent || b.value || '').toLowerCase() === 'login'
+              );
+            }
+
+            console.log('Found elements:', {
+              username: !!usernameField,
+              password: !!passwordField,
+              loginButton: !!loginButton
+            });
 
             if (!usernameField) {
-              return { success: false, error: 'ユーザー名フィールドが見つかりません' };
+              // Return detailed error with found inputs info
+              const inputInfo = allInputs.slice(0, 5).map(i => `${i.type || 'text'}:${i.name || i.id || 'no-name'}`).join(', ');
+              return { success: false, error: `ユーザー名フィールドが見つかりません。入力フィールド: ${allInputs.length}個 [${inputInfo}]` };
             }
+
+            // Fill username
+            usernameField.focus();
+            usernameField.value = email;
+            usernameField.dispatchEvent(new Event('input', { bubbles: true }));
+            usernameField.dispatchEvent(new Event('change', { bubbles: true }));
+
             if (!passwordField) {
               return { success: false, error: 'パスワードフィールドが見つかりません' };
             }
+
+            // Fill password
+            passwordField.focus();
+            passwordField.value = password;
+            passwordField.dispatchEvent(new Event('input', { bubbles: true }));
+            passwordField.dispatchEvent(new Event('change', { bubbles: true }));
+
             if (!loginButton) {
+              // Try to find form and submit it
+              const form = passwordField.closest('form') || usernameField.closest('form');
+              if (form) {
+                console.log('Submitting form directly');
+                form.submit();
+                return { success: true };
+              }
               return { success: false, error: 'ログインボタンが見つかりません' };
             }
 
-            // Fill in credentials
-            usernameField.value = email;
-            usernameField.dispatchEvent(new Event('input', { bubbles: true }));
-
-            passwordField.value = password;
-            passwordField.dispatchEvent(new Event('input', { bubbles: true }));
-
             // Click login button
+            console.log('Clicking login button:', loginButton);
+            loginButton.focus();
             loginButton.click();
 
             return { success: true };
@@ -629,8 +748,24 @@ document.addEventListener('DOMContentLoaded', async () => {
         args: [email, password]
       });
 
-      if (results && results[0] && results[0].result) {
-        return results[0].result;
+      // Check results from all frames - look for success or meaningful error
+      if (results && results.length > 0) {
+        // First, look for a successful result
+        const successResult = results.find(r => r.result && r.result.success === true);
+        if (successResult) {
+          return successResult.result;
+        }
+
+        // If no success, return the most informative error
+        const errorResult = results.find(r => r.result && r.result.error);
+        if (errorResult) {
+          return errorResult.result;
+        }
+
+        // Return first result if available
+        if (results[0] && results[0].result) {
+          return results[0].result;
+        }
       }
 
       return { success: false, error: 'スクリプト実行に失敗しました' };
