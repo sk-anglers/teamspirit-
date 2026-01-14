@@ -273,7 +273,8 @@
         throw new Error('既に出勤済みです');
       }
 
-      clockInBtn.click();
+      // More robust click simulation
+      simulateClick(clockInBtn);
       await wait(1000);
 
       return { success: true };
@@ -293,7 +294,8 @@
         throw new Error('出勤していないため退勤できません');
       }
 
-      clockOutBtn.click();
+      // More robust click simulation
+      simulateClick(clockOutBtn);
       await wait(1000);
 
       return { success: true };
@@ -403,6 +405,39 @@
 
   function wait(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  // Simulate a real click with mouse events
+  function simulateClick(element) {
+    // Focus the element first
+    element.focus();
+
+    // Create and dispatch mouse events
+    const mouseDownEvent = new MouseEvent('mousedown', {
+      bubbles: true,
+      cancelable: true,
+      view: window
+    });
+    element.dispatchEvent(mouseDownEvent);
+
+    const mouseUpEvent = new MouseEvent('mouseup', {
+      bubbles: true,
+      cancelable: true,
+      view: window
+    });
+    element.dispatchEvent(mouseUpEvent);
+
+    const clickEvent = new MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      view: window
+    });
+    element.dispatchEvent(clickEvent);
+
+    // Also try the native click
+    element.click();
+
+    console.log('Simulated click on:', element.id || element.value || element.textContent);
   }
 
   // Log page type for debugging
