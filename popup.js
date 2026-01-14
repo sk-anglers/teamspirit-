@@ -35,15 +35,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   let timeUpdateInterval = null;
 
   // Load saved data
-  const stored = await chrome.storage.local.get(['savedLocation', 'credentials', 'isLoggedIn', 'summaryCollapsed']);
+  const stored = await chrome.storage.local.get(['savedLocation', 'savedEmail', 'isLoggedIn', 'summaryCollapsed']);
+  const sessionData = await chrome.storage.session.get(['sessionPassword']);
 
   if (stored.savedLocation) {
     locationSelect.value = stored.savedLocation;
   }
 
-  if (stored.credentials) {
-    emailInput.value = stored.credentials.email || '';
-    passwordInput.value = stored.credentials.password || '';
+  // Load email from persistent storage
+  if (stored.savedEmail) {
+    emailInput.value = stored.savedEmail;
+  }
+
+  // Load password from session storage (browser session only)
+  if (sessionData.sessionPassword) {
+    passwordInput.value = sessionData.sessionPassword;
   }
 
   // Load summary collapsed state (default: collapsed)
@@ -151,12 +157,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Reset stored login state since we can't verify it
     await chrome.storage.local.set({ isLoggedIn: false });
 
-    if (stored.credentials) {
-      // Has credentials
+    if (stored.savedEmail) {
+      // Has saved email
       showLoginSection();
       showStatus('ログインしてください', 'logged-out');
     } else {
-      // No credentials
+      // No saved email
       showLoginSection();
       showStatus('ログイン情報を入力してください', 'logged-out');
     }
@@ -819,12 +825,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       loginBtn.classList.add('loading');
       showMessage('ログイン中...', 'info');
 
-      // Save credentials if checkbox is checked
+      // Save email to persistent storage if checkbox is checked
       if (saveCredentialsCheckbox.checked) {
-        await chrome.storage.local.set({
-          credentials: { email, password }
-        });
+        await chrome.storage.local.set({ savedEmail: email });
       }
+      // Always save password to session storage (cleared when browser closes)
+      await chrome.storage.session.set({ sessionPassword: password });
 
       // Open TeamSpirit in background and login
       const result = await performLoginProcess(email, password);
@@ -971,8 +977,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       btn.classList.add('loading');
       showMessage('処理中...', 'info');
 
-      // Get stored credentials
-      const { credentials } = await chrome.storage.local.get('credentials');
+      // Get stored credentials (email from local, password from session)
+      const { savedEmail } = await chrome.storage.local.get('savedEmail');
+      const { sessionPassword } = await chrome.storage.session.get('sessionPassword');
 
       let tab = await findTeamSpiritTab();
 
@@ -989,9 +996,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Check if login is needed
         const pageInfo = await getPageInfo(autoOpenedTab.id);
 
-        if (pageInfo.isLoginPage && credentials) {
+        if (pageInfo.isLoginPage && savedEmail && sessionPassword) {
           showMessage('自動ログイン中...', 'info');
-          const loginResult = await sendLoginCommand(autoOpenedTab.id, credentials.email, credentials.password);
+          const loginResult = await sendLoginCommand(autoOpenedTab.id, savedEmail, sessionPassword);
 
           if (!loginResult.success) {
             throw new Error('自動ログインに失敗しました');
