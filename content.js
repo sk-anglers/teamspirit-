@@ -409,35 +409,67 @@
 
   // Simulate a real click with mouse events
   function simulateClick(element) {
+    console.log('simulateClick called on:', element.id || element.value, 'disabled:', element.disabled);
+
     // Focus the element first
     element.focus();
 
+    // Try to call onclick directly if it exists
+    if (element.onclick) {
+      console.log('Calling onclick directly');
+      element.onclick();
+    }
+
     // Create and dispatch mouse events
+    const rect = element.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+
     const mouseDownEvent = new MouseEvent('mousedown', {
       bubbles: true,
       cancelable: true,
-      view: window
+      view: window,
+      clientX: centerX,
+      clientY: centerY
     });
     element.dispatchEvent(mouseDownEvent);
 
     const mouseUpEvent = new MouseEvent('mouseup', {
       bubbles: true,
       cancelable: true,
-      view: window
+      view: window,
+      clientX: centerX,
+      clientY: centerY
     });
     element.dispatchEvent(mouseUpEvent);
 
     const clickEvent = new MouseEvent('click', {
       bubbles: true,
       cancelable: true,
-      view: window
+      view: window,
+      clientX: centerX,
+      clientY: centerY
     });
     element.dispatchEvent(clickEvent);
 
     // Also try the native click
     element.click();
 
-    console.log('Simulated click on:', element.id || element.value || element.textContent);
+    // For input elements, also try form submission approach
+    if (element.tagName === 'INPUT' && element.type === 'button') {
+      // Try triggering via attribute
+      const onclickAttr = element.getAttribute('onclick');
+      if (onclickAttr) {
+        console.log('Executing onclick attribute:', onclickAttr);
+        try {
+          new Function(onclickAttr).call(element);
+        } catch (e) {
+          console.log('onclick attr execution failed:', e);
+        }
+      }
+    }
+
+    console.log('Simulated click completed on:', element.id || element.value);
   }
 
   // Log page type for debugging
