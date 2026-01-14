@@ -22,6 +22,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const currentTimeEl = document.getElementById('currentTime');
   const clockInTimeEl = document.getElementById('clockInTime');
   const workingTimeEl = document.getElementById('workingTime');
+  const targetClockOutEl = document.getElementById('targetClockOut');
   const summarySection = document.getElementById('summarySection');
   const summaryToggle = document.getElementById('summaryToggle');
   const summaryContent = document.getElementById('summaryContent');
@@ -296,17 +297,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // Update summary in real-time if we have summary data
         if (result.workSummary) {
-          updateSummaryRealTime(result.workSummary, workingMs);
+          updateSummaryRealTime(result.workSummary, workingMs, result.clockInTimestamp);
         }
       } else {
         clockInTimeEl.textContent = '--:--';
         workingTimeEl.textContent = '--:--:--';
+        targetClockOutEl.textContent = '--:--';
       }
     });
   }
 
   // Update summary values in real-time by adding today's working time
-  function updateSummaryRealTime(summary, todayWorkingMs) {
+  function updateSummaryRealTime(summary, todayWorkingMs, clockInTimestamp) {
     const scheduledMinutes = parseTimeToMinutes(summary.scheduledHours);
     const baseTotalMinutes = parseTimeToMinutes(summary.totalHours);
 
@@ -338,6 +340,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Calculate remaining days
     const scheduledDays = parseInt(summary.scheduledDays, 10);
     const actualDays = parseInt(summary.actualDays, 10);
+    let requiredMinutesPerDay = 0;
 
     if (!isNaN(scheduledDays) && !isNaN(actualDays)) {
       const remainingDays = scheduledDays - actualDays;
@@ -346,7 +349,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (remainingDays > 0) {
         const remainingMinutes = scheduledMinutes - realTimeTotalMinutes;
         if (remainingMinutes > 0) {
-          const requiredMinutesPerDay = Math.ceil(remainingMinutes / remainingDays);
+          requiredMinutesPerDay = Math.ceil(remainingMinutes / remainingDays);
           requiredPerDayEl.textContent = formatMinutesToTime(requiredMinutesPerDay);
           requiredPerDayEl.classList.remove('negative', 'positive');
         } else {
@@ -355,6 +358,19 @@ document.addEventListener('DOMContentLoaded', async () => {
           requiredPerDayEl.classList.remove('negative');
         }
       }
+    }
+
+    // Calculate target clock-out time
+    // Formula: 出勤時刻 + 一日当たり必要時間 + 休憩1時間
+    if (clockInTimestamp && requiredMinutesPerDay > 0) {
+      const breakMinutes = 60; // 1 hour break
+      const targetMs = clockInTimestamp + (requiredMinutesPerDay + breakMinutes) * 60 * 1000;
+      const targetDate = new Date(targetMs);
+      targetClockOutEl.textContent = formatTimeShort(targetDate);
+    } else if (requiredMinutesPerDay === 0) {
+      targetClockOutEl.textContent = '達成済み';
+    } else {
+      targetClockOutEl.textContent = '--:--';
     }
   }
 

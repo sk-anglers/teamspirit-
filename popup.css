@@ -305,6 +305,22 @@ h1 {
   font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
 }
 
+.time-row.target {
+  background: #fff8e6;
+  margin: 6px -8px -8px -8px;
+  padding: 8px;
+  border-radius: 0 0 6px 6px;
+}
+
+.time-row.target .time-label {
+  color: #b8860b;
+  font-weight: bold;
+}
+
+.time-row.target .time-value {
+  color: #b8860b;
+}
+
 /* Work Summary Display */
 .summary-display {
   background: #fff;
