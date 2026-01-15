@@ -288,12 +288,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     await initializeTimeDisplay(false);
   }
 
-  function updateButtonStates(isWorking) {
-    if (isWorking === true) {
+  // state: 'working' | 'clocked-out' | 'not-working' | null
+  function updateButtonStates(state) {
+    if (state === 'working') {
       // Currently working - disable clock in, enable clock out
       clockInBtn.disabled = true;
       clockOutBtn.disabled = false;
-    } else if (isWorking === false) {
+    } else if (state === 'clocked-out') {
+      // Already clocked out - disable both
+      clockInBtn.disabled = true;
+      clockOutBtn.disabled = true;
+    } else if (state === 'not-working') {
       // Not working - enable clock in, disable clock out
       clockInBtn.disabled = false;
       clockOutBtn.disabled = true;
@@ -883,12 +888,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Use cached data
       if (stored.hasClockedOut && stored.clockOutTimestamp) {
         showStatus('退勤済み', 'logged-in');
-        updateButtonStates(false);
+        updateButtonStates('clocked-out');
         timeSection.classList.remove('hidden');
         updateTimeDisplayFinal(stored.clockInTimestamp, stored.clockOutTimestamp);
       } else {
         showStatus('出勤中', 'working');
-        updateButtonStates(true);
+        updateButtonStates('working');
         showTimeSection();
         updateTimeDisplay();
       }
@@ -910,7 +915,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (fetchResult.isWorking) {
         // User is currently working (has clock-in, no clock-out)
         showStatus('出勤中', 'working');
-        updateButtonStates(true);
+        updateButtonStates('working');
         showTimeSection();
         updateTimeDisplay();
         if (fetchResult.summary) {
@@ -919,7 +924,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       } else if (fetchResult.hasClockedOut) {
         // User has clocked out today - show final times
         showStatus('退勤済み', 'logged-in');
-        updateButtonStates(false);
+        updateButtonStates('clocked-out');
         timeSection.classList.remove('hidden');
         updateTimeDisplayFinal(fetchResult.clockInTimestamp, fetchResult.clockOutTimestamp);
         if (fetchResult.summary) {
@@ -928,7 +933,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       } else {
         // User hasn't clocked in today
         showStatus('未出勤', 'logged-in');
-        updateButtonStates(false);
+        updateButtonStates('not-working');
         hideTimeSection();
         hideSummarySection();
       }
@@ -939,7 +944,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         showMessage('出勤時刻の取得に失敗しました', 'error');
       } else {
         showStatus('未出勤', 'logged-in');
-        updateButtonStates(false);
+        updateButtonStates('not-working');
         hideTimeSection();
         hideSummarySection();
         showMessage('', '');
@@ -1421,18 +1426,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Update button states and time management based on action
         if (action === 'clockIn') {
           showStatus('出勤中', 'working');
-          updateButtonStates(true);
+          updateButtonStates('working');
           // Save clock-in timestamp locally
           await saveClockInTime();
           showTimeSection();
         } else {
-          showStatus('未出勤', 'logged-in');
-          updateButtonStates(false);
-          // Clear clock-in timestamp and work summary
-          await clearClockInTime();
-          await chrome.storage.local.remove('workSummary');
-          hideTimeSection();
-          hideSummarySection();
+          showStatus('退勤済み', 'logged-in');
+          updateButtonStates('clocked-out');
+          // Keep clock-in timestamp for display, mark as clocked out
+          await chrome.storage.local.set({ hasClockedOut: true, clockOutTimestamp: Date.now() });
         }
 
         // キャッシュを無効化してから打刻漏れデータを再取得
