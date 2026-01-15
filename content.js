@@ -527,38 +527,45 @@
 
   // ==================== Panel Injection ====================
 
-  function findAndInjectPanel() {
+  function findAndInjectPanelInMainFrame() {
     if (document.getElementById('ts-info-display')) {
       return;
     }
 
-    const bigArea = document.getElementById('big_area');
+    // TeamSpiritのVisualforceページコンポーネントを探す
+    const tsSection = document.querySelector('[data-component-id="flexipage_visualforcePage"]') ||
+                      document.querySelector('.flexipageComponent[data-component-id*="visualforce"]');
 
-    if (!bigArea) {
+    if (!tsSection) {
       retryCount++;
       if (retryCount < MAX_RETRIES) {
-        setTimeout(findAndInjectPanel, CHECK_INTERVAL);
+        setTimeout(findAndInjectPanelInMainFrame, CHECK_INTERVAL);
       }
       return;
     }
 
-    console.log('[TS-Assistant] 打刻エリア発見！パネル埋め込み開始');
+    console.log('[TS-Assistant] TeamSpiritセクション発見！パネル挿入開始');
+
+    // 独立したセクションとしてパネルを作成
+    const panelContainer = document.createElement('div');
+    panelContainer.id = 'ts-info-container';
+    panelContainer.style.cssText = `
+      background: #fff;
+      border: 1px solid #d8dde6;
+      border-radius: 0.25rem;
+      margin: 12px 0;
+      padding: 15px 20px;
+      box-shadow: 0 2px 2px 0 rgba(0,0,0,0.1);
+    `;
 
     infoPanel = createInfoPanel();
+    infoPanel.style.padding = '0';
+    infoPanel.style.border = 'none';
 
-    bigArea.style.position = 'relative';
-    bigArea.style.overflow = 'visible';
+    panelContainer.appendChild(infoPanel);
 
-    infoPanel.style.position = 'absolute';
-    infoPanel.style.top = '0';
-    infoPanel.style.right = '0';
-    infoPanel.style.background = '#fff';
-    infoPanel.style.borderLeft = '1px solid #ccc';
-    infoPanel.style.padding = '10px';
-    infoPanel.style.boxSizing = 'border-box';
-    infoPanel.style.overflow = 'visible';
-
-    bigArea.appendChild(infoPanel);
+    // TeamSpiritセクションの後ろに挿入
+    tsSection.parentNode.insertBefore(panelContainer, tsSection.nextSibling);
 
     try {
       if (chrome.runtime?.id) {
@@ -661,14 +668,46 @@
 
   if (isMainFrame) {
     console.log('[TS-Assistant] メインフレーム初期化');
+
+    // パネル挿入を試みる関数
+    function tryInjectPanel() {
+      if (!isExtensionContextValid()) return;
+
+      // 既存のパネルがあれば何もしない
+      if (document.getElementById('ts-info-display')) return;
+
+      // 既存のコンテナがあれば削除（再挿入のため）
+      const existingContainer = document.getElementById('ts-info-container');
+      if (existingContainer) {
+        existingContainer.remove();
+      }
+
+      retryCount = 0;
+      findAndInjectPanelInMainFrame();
+    }
+
+    // 初回挿入（2秒後）
+    setTimeout(tryInjectPanel, 2000);
+
+    // URL変更を監視（SPA対応）
+    let lastUrl = location.href;
+    const urlObserver = new MutationObserver(() => {
+      if (location.href !== lastUrl) {
+        lastUrl = location.href;
+        console.log('[TS-Assistant] URL変更検出:', location.href);
+
+        // ホーム画面に戻った場合、パネルを再挿入
+        if (location.href.includes('/lightning/page/home')) {
+          setTimeout(tryInjectPanel, 2000);
+        }
+      }
+    });
+    urlObserver.observe(document.body, { childList: true, subtree: true });
+
+    // 10秒後にまだ表示されていなければフォールバック
     setTimeout(async () => {
       try {
         if (!isExtensionContextValid()) return;
-        const result = await chrome.storage.local.get(['panelEmbedded']);
-        if (result.panelEmbedded) {
-          console.log('[TS-Assistant] iframe内で埋め込み済み');
-          return;
-        }
         if (!document.getElementById('ts-info-display')) {
           showFixedPanel();
         }
@@ -684,14 +723,8 @@
         }
       } catch (e) {}
     });
-  } else {
-    console.log('[TS-Assistant iframe] 打刻エリア検索開始');
-    setTimeout(() => {
-      if (isExtensionContextValid()) {
-        findAndInjectPanel();
-      }
-    }, 2000);
   }
+  // iframeでは何もしない（メインフレームで処理）
 
   // ストレージ変更監視
   try {

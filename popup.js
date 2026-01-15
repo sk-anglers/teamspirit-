@@ -3,6 +3,48 @@ const TEAMSPIRIT_ATTENDANCE_URL = 'https://teamspirit-74532.lightning.force.com/
 const LOGIN_URL = 'https://login.salesforce.com/';
 const MY_DOMAIN_LOGIN_URL = 'https://teamspirit-74532.my.salesforce.com/';
 
+// ==================== 暗号化ユーティリティ ====================
+const ENCRYPTION_KEY = 'ts-assistant-v3-2026'; // 固定キー（難読化用）
+
+async function getEncryptionKey() {
+  const encoder = new TextEncoder();
+  const keyData = encoder.encode(ENCRYPTION_KEY);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', keyData);
+  return crypto.subtle.importKey('raw', hashBuffer, 'AES-GCM', false, ['encrypt', 'decrypt']);
+}
+
+async function encryptPassword(password) {
+  try {
+    const key = await getEncryptionKey();
+    const encoder = new TextEncoder();
+    const data = encoder.encode(password);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, data);
+    // IV + 暗号文をBase64で保存
+    const combined = new Uint8Array(iv.length + encrypted.byteLength);
+    combined.set(iv);
+    combined.set(new Uint8Array(encrypted), iv.length);
+    return btoa(String.fromCharCode(...combined));
+  } catch (e) {
+    console.error('Encryption failed:', e);
+    return null;
+  }
+}
+
+async function decryptPassword(encryptedData) {
+  try {
+    const key = await getEncryptionKey();
+    const combined = new Uint8Array(atob(encryptedData).split('').map(c => c.charCodeAt(0)));
+    const iv = combined.slice(0, 12);
+    const data = combined.slice(12);
+    const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, data);
+    return new TextDecoder().decode(decrypted);
+  } catch (e) {
+    console.error('Decryption failed:', e);
+    return null;
+  }
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
   // Elements
   const loginSection = document.getElementById('loginSection');
@@ -39,8 +81,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   let timeUpdateInterval = null;
 
   // Load saved data
-  const stored = await chrome.storage.local.get(['savedLocation', 'savedEmail', 'isLoggedIn', 'summaryCollapsed']);
-  const sessionData = await chrome.storage.session.get(['sessionPassword']);
+  const stored = await chrome.storage.local.get(['savedLocation', 'savedEmail', 'isLoggedIn', 'summaryCollapsed', 'encryptedPassword']);
 
   if (stored.savedLocation) {
     locationSelect.value = stored.savedLocation;
@@ -51,9 +92,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     emailInput.value = stored.savedEmail;
   }
 
-  // Load password from session storage (browser session only)
-  if (sessionData.sessionPassword) {
-    passwordInput.value = sessionData.sessionPassword;
+  // Load password from encrypted storage
+  if (stored.encryptedPassword) {
+    const decrypted = await decryptPassword(stored.encryptedPassword);
+    if (decrypted) {
+      passwordInput.value = decrypted;
+    }
   }
 
   // Load summary collapsed state (default: collapsed)
@@ -981,16 +1025,19 @@ document.addEventListener('DOMContentLoaded', async () => {
       loginBtn.classList.add('loading');
       showMessage('ログイン中...', 'info');
 
-      // Save email to persistent storage if checkbox is checked, otherwise remove it
+      // Save credentials if checkbox is checked
       if (saveCredentialsCheckbox.checked) {
         await chrome.storage.local.set({ savedEmail: email });
-        console.log('Email saved to storage:', email);
+        // Encrypt and save password
+        const encrypted = await encryptPassword(password);
+        if (encrypted) {
+          await chrome.storage.local.set({ encryptedPassword: encrypted });
+          console.log('Credentials saved (encrypted)');
+        }
       } else {
-        await chrome.storage.local.remove('savedEmail');
-        console.log('Email removed from storage');
+        await chrome.storage.local.remove(['savedEmail', 'encryptedPassword']);
+        console.log('Credentials removed from storage');
       }
-      // Always save password to session storage (cleared when browser closes)
-      await chrome.storage.session.set({ sessionPassword: password });
 
       // Open TeamSpirit in background and login
       const result = await performLoginProcess(email, password);
@@ -1137,9 +1184,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       btn.classList.add('loading');
       showMessage('処理中...', 'info');
 
-      // Get stored credentials (email from local, password from session)
-      const { savedEmail } = await chrome.storage.local.get('savedEmail');
-      const { sessionPassword } = await chrome.storage.session.get('sessionPassword');
+      // Get stored credentials (email and encrypted password from local)
+      const { savedEmail, encryptedPassword } = await chrome.storage.local.get(['savedEmail', 'encryptedPassword']);
+      const savedPassword = encryptedPassword ? await decryptPassword(encryptedPassword) : null;
 
       let tab = await findTeamSpiritTab();
 
@@ -1156,9 +1203,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Check if login is needed
         const pageInfo = await getPageInfo(autoOpenedTab.id);
 
-        if (pageInfo.isLoginPage && savedEmail && sessionPassword) {
+        if (pageInfo.isLoginPage && savedEmail && savedPassword) {
           showMessage('自動ログイン中...', 'info');
-          const loginResult = await sendLoginCommand(autoOpenedTab.id, savedEmail, sessionPassword);
+          const loginResult = await sendLoginCommand(autoOpenedTab.id, savedEmail, savedPassword);
 
           if (!loginResult.success) {
             throw new Error('自動ログインに失敗しました');
