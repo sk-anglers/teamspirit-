@@ -1433,8 +1433,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         } else {
           showStatus('退勤済み', 'logged-in');
           updateButtonStates('clocked-out');
-          // Keep clock-in timestamp for display, mark as clocked out
-          await chrome.storage.local.set({ hasClockedOut: true, clockOutTimestamp: Date.now() });
+          // Get clock-in timestamp and set clock-out timestamp
+          const stored = await chrome.storage.local.get('clockInTimestamp');
+          const clockOutTimestamp = Date.now();
+          await chrome.storage.local.set({ hasClockedOut: true, clockOutTimestamp: clockOutTimestamp });
+          // Show final time display (this also stops the interval)
+          if (stored.clockInTimestamp) {
+            updateTimeDisplayFinal(stored.clockInTimestamp, clockOutTimestamp);
+          }
         }
 
         // キャッシュを無効化してから打刻漏れデータを再取得

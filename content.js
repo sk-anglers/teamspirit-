@@ -922,6 +922,17 @@
           cachedData = changes.attendanceData.newValue;
           updateDisplay();
         }
+        // 退勤状態の変更を監視（ポップアップからの退勤打刻を即時反映）
+        if (changes.hasClockedOut && changes.hasClockedOut.newValue === true) {
+          chrome.storage.local.get(['clockInTimestamp', 'clockOutTimestamp'], (result) => {
+            if (cachedData && result.clockInTimestamp && result.clockOutTimestamp) {
+              cachedData.isWorking = false;
+              const clockOutDate = new Date(result.clockOutTimestamp);
+              cachedData.clockOutTime = `${String(clockOutDate.getHours()).padStart(2, '0')}:${String(clockOutDate.getMinutes()).padStart(2, '0')}`;
+              updateDisplay();
+            }
+          });
+        }
       }
     });
   } catch (e) {}
