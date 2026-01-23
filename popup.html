@@ -109,6 +109,49 @@
       </div>
     </div>
 
+    <!-- Overtime Warning Section -->
+    <div id="overtimeSection" class="section hidden">
+      <div class="summary-display">
+        <div class="summary-header" id="overtimeToggle">
+          <span class="toggle-icon">▼</span>
+          <span>残業警告</span>
+          <span class="overtime-badge" id="overtimeBadge"></span>
+        </div>
+        <div id="overtimeAlert" class="overtime-alert hidden"></div>
+        <div class="summary-content" id="overtimeContent">
+          <div class="summary-row">
+            <span class="summary-label">勤務日数</span>
+            <span class="summary-value" id="actualDays">--日</span>
+          </div>
+          <div class="summary-row">
+            <span class="summary-label">勤務時間</span>
+            <span class="summary-value" id="actualHours">--:--</span>
+          </div>
+          <div class="summary-row">
+            <span class="summary-label">平均/日</span>
+            <span class="summary-value" id="avgHoursPerDay">--:--</span>
+          </div>
+          <div class="summary-row highlight">
+            <span class="summary-label">残業/日</span>
+            <span class="summary-value" id="avgOvertimePerDay">--:--</span>
+          </div>
+          <div class="summary-divider"></div>
+          <div class="summary-row">
+            <span class="summary-label">月間残業</span>
+            <span class="summary-value" id="monthlyOvertime">--:--</span>
+          </div>
+          <div class="summary-row">
+            <span class="summary-label">残業上限</span>
+            <span class="summary-value">45:00</span>
+          </div>
+          <div class="summary-row highlight">
+            <span class="summary-label">月末予測</span>
+            <span class="summary-value" id="overtimeForecast">--:--</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Missed Punches Section -->
     <div id="missedPunchSection" class="section hidden">
       <div class="summary-display">

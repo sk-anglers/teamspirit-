@@ -81,6 +81,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   const missedPunchContent = document.getElementById('missedPunchContent');
   const missedPunchCount = document.getElementById('missedPunchCount');
   const missedPunchList = document.getElementById('missedPunchList');
+  const overtimeSection = document.getElementById('overtimeSection');
+  const overtimeToggle = document.getElementById('overtimeToggle');
+  const overtimeContent = document.getElementById('overtimeContent');
+  const overtimeBadge = document.getElementById('overtimeBadge');
+  const overtimeAlert = document.getElementById('overtimeAlert');
+  const actualDaysEl = document.getElementById('actualDays');
+  const actualHoursEl = document.getElementById('actualHours');
+  const avgHoursPerDayEl = document.getElementById('avgHoursPerDay');
+  const avgOvertimePerDayEl = document.getElementById('avgOvertimePerDay');
+  const monthlyOvertimeEl = document.getElementById('monthlyOvertime');
+  const overtimeForecastEl = document.getElementById('overtimeForecast');
   const todaySection = document.getElementById('todaySection');
   const todayDateEl = document.getElementById('todayDate');
   const todayDayOfWeekEl = document.getElementById('todayDayOfWeek');
@@ -145,6 +156,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     chrome.storage.local.set({ missedPunchCollapsed: false });
     // Scroll to missed punch section
     missedPunchSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
+  // Load overtime collapsed state (default: expanded)
+  const overtimeStored = await chrome.storage.local.get('overtimeCollapsed');
+  if (overtimeStored.overtimeCollapsed === true) {
+    overtimeToggle.classList.add('collapsed');
+    overtimeContent.classList.add('collapsed');
+  }
+
+  // Overtime toggle event
+  overtimeToggle.addEventListener('click', () => {
+    const isCollapsed = overtimeToggle.classList.toggle('collapsed');
+    overtimeContent.classList.toggle('collapsed');
+    chrome.storage.local.set({ overtimeCollapsed: isCollapsed });
   });
 
   // Save location preference when changed
@@ -1047,11 +1072,110 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Show summary section
     summarySection.classList.remove('hidden');
+
+    // Update overtime section
+    updateOvertimeSection(summary, totalMinutes, scheduledDays, actualDays);
   }
 
   // Hide summary section
   function hideSummarySection() {
     summarySection.classList.add('hidden');
+    hideOvertimeSection();
+  }
+
+  // Constants for overtime calculation
+  const STANDARD_HOURS_PER_DAY = 8 * 60; // 8時間 = 480分
+  const OVERTIME_LIMIT = 45 * 60; // 45時間 = 2700分
+
+  // Update overtime section
+  function updateOvertimeSection(summary, totalMinutes, scheduledDays, actualDays) {
+    if (!actualDays || actualDays === 0 || totalMinutes === null) {
+      hideOvertimeSection();
+      return;
+    }
+
+    // 勤務日数
+    actualDaysEl.textContent = `${actualDays}日`;
+
+    // 勤務時間
+    actualHoursEl.textContent = formatMinutesToTime(totalMinutes);
+
+    // 平均/日
+    const avgMinutesPerDay = Math.round(totalMinutes / actualDays);
+    avgHoursPerDayEl.textContent = formatMinutesToTime(avgMinutesPerDay);
+
+    // 残業/日
+    const avgOvertimePerDay = avgMinutesPerDay - STANDARD_HOURS_PER_DAY;
+    avgOvertimePerDayEl.textContent = avgOvertimePerDay >= 0
+      ? `+${formatMinutesToTime(avgOvertimePerDay)}`
+      : formatMinutesToTime(avgOvertimePerDay);
+
+    // 残業/日の色分け
+    avgOvertimePerDayEl.className = 'summary-value';
+    if (avgOvertimePerDay >= 120) { // 2時間以上
+      avgOvertimePerDayEl.classList.add('overtime-value', 'danger');
+    } else if (avgOvertimePerDay >= 60) { // 1-2時間
+      avgOvertimePerDayEl.classList.add('overtime-value', 'warning');
+    } else if (avgOvertimePerDay > 0) { // 0-1時間
+      avgOvertimePerDayEl.classList.add('overtime-value', 'caution');
+    } else {
+      avgOvertimePerDayEl.classList.add('overtime-value', 'safe');
+    }
+
+    // 月間残業 = 総労働時間 - (勤務日数 × 8時間)
+    const monthlyOvertime = totalMinutes - (actualDays * STANDARD_HOURS_PER_DAY);
+    monthlyOvertimeEl.textContent = monthlyOvertime >= 0
+      ? `+${formatMinutesToTime(monthlyOvertime)}`
+      : formatMinutesToTime(monthlyOvertime);
+
+    // 月間残業の色分け
+    monthlyOvertimeEl.className = 'summary-value';
+    if (monthlyOvertime > OVERTIME_LIMIT) {
+      monthlyOvertimeEl.classList.add('overtime-value', 'danger');
+    } else if (monthlyOvertime > OVERTIME_LIMIT * 0.8) { // 36時間以上
+      monthlyOvertimeEl.classList.add('overtime-value', 'warning');
+    }
+
+    // 月末予測 = 残業/日 × 所定勤務日数
+    const forecastOvertime = avgOvertimePerDay * scheduledDays;
+    overtimeForecastEl.textContent = forecastOvertime >= 0
+      ? `+${formatMinutesToTime(forecastOvertime)}`
+      : formatMinutesToTime(forecastOvertime);
+
+    // 月末予測の色分けとアラート・バッジ
+    overtimeForecastEl.className = 'summary-value';
+    overtimeBadge.className = 'overtime-badge';
+    overtimeBadge.textContent = '';
+
+    if (monthlyOvertime > OVERTIME_LIMIT) {
+      // 既に45時間超過
+      overtimeForecastEl.classList.add('overtime-value', 'danger');
+      overtimeAlert.classList.remove('hidden', 'warning');
+      overtimeAlert.textContent = '🚨 月45時間超過中！';
+      overtimeBadge.classList.add('danger');
+      overtimeBadge.textContent = '超過中';
+    } else if (forecastOvertime > OVERTIME_LIMIT) {
+      // 超過見込み
+      overtimeForecastEl.classList.add('overtime-value', 'warning');
+      overtimeAlert.classList.remove('hidden');
+      overtimeAlert.classList.add('warning');
+      overtimeAlert.textContent = '⚠️ 45時間超過見込み';
+      overtimeBadge.classList.add('warning');
+      overtimeBadge.textContent = '注意';
+    } else {
+      overtimeForecastEl.classList.add('overtime-value', 'safe');
+      overtimeAlert.classList.add('hidden');
+      overtimeBadge.classList.add('safe');
+      overtimeBadge.textContent = '正常';
+    }
+
+    // Show overtime section
+    overtimeSection.classList.remove('hidden');
+  }
+
+  // Hide overtime section
+  function hideOvertimeSection() {
+    overtimeSection.classList.add('hidden');
   }
 
   // Update missed punch section

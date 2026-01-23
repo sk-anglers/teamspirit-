@@ -563,3 +563,58 @@ h1 {
   font-size: 12px;
   padding: 8px 0;
 }
+
+/* Overtime Warning Section */
+.overtime-badge {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: bold;
+}
+
+.overtime-badge.danger {
+  background: #fde7e7;
+  color: #c23934;
+}
+
+.overtime-badge.warning {
+  background: #fff3e0;
+  color: #e65100;
+}
+
+.overtime-badge.safe {
+  background: #e8f5e9;
+  color: #2e844a;
+}
+
+.overtime-alert {
+  background: #c23934;
+  color: #fff;
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.overtime-alert.warning {
+  background: #e65100;
+}
+
+.overtime-value.danger {
+  color: #c23934;
+}
+
+.overtime-value.warning {
+  color: #e65100;
+}
+
+.overtime-value.caution {
+  color: #f9ab00;
+}
+
+.overtime-value.safe {
+  color: #2e844a;
+}

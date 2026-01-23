@@ -559,6 +559,43 @@
           </div>
         </div>
 
+        <!-- 残業警告欄 -->
+        <div id="ts-overtime-section" style="min-width:150px; display:none;">
+          <div style="font-weight:bold; color:#1a73e8; border-bottom:2px solid #1a73e8; padding-bottom:3px; margin-bottom:6px;">残業警告</div>
+          <div id="ts-overtime-alert" style="display:none; background:#d93025; color:#fff; padding:4px 8px; border-radius:4px; margin-bottom:6px; font-size:11px; font-weight:600; text-align:center;">
+            <!-- 45時間超過アラート -->
+          </div>
+          <div style="display:flex; justify-content:space-between; margin-bottom:3px; gap:10px;">
+            <span style="color:#666;">勤務日数</span>
+            <span style="font-weight:600;" id="ts-actual-days">--日</span>
+          </div>
+          <div style="display:flex; justify-content:space-between; margin-bottom:3px; gap:10px;">
+            <span style="color:#666;">勤務時間</span>
+            <span style="font-weight:600;" id="ts-actual-hours">--:--</span>
+          </div>
+          <div style="display:flex; justify-content:space-between; margin-bottom:3px; gap:10px;">
+            <span style="color:#666;">平均/日</span>
+            <span style="font-weight:600;" id="ts-avg-hours-per-day">--:--</span>
+          </div>
+          <div style="display:flex; justify-content:space-between; margin-bottom:3px; gap:10px;">
+            <span style="color:#666;">残業/日</span>
+            <span style="font-weight:600;" id="ts-avg-overtime-per-day">--:--</span>
+          </div>
+          <div style="border-top:1px solid #e0e0e0; margin:6px 0;"></div>
+          <div style="display:flex; justify-content:space-between; margin-bottom:3px; gap:10px;">
+            <span style="color:#666;">月間残業</span>
+            <span style="font-weight:600;" id="ts-monthly-overtime">--:--</span>
+          </div>
+          <div style="display:flex; justify-content:space-between; margin-bottom:3px; gap:10px;">
+            <span style="color:#666;">残業上限</span>
+            <span style="font-weight:600; color:#666;">45:00</span>
+          </div>
+          <div style="display:flex; justify-content:space-between; gap:10px;">
+            <span style="color:#666;">月末予測</span>
+            <span style="font-weight:600;" id="ts-overtime-forecast">--:--</span>
+          </div>
+        </div>
+
         <!-- 打刻漏れ欄 -->
         <div id="ts-missed-section" style="min-width:120px; display:none;">
           <div style="font-weight:bold; color:#1a73e8; border-bottom:2px solid #1a73e8; padding-bottom:3px; margin-bottom:6px;">打刻漏れ</div>
@@ -695,8 +732,108 @@
           }
         }
       }
+
+      // 残業警告セクション更新
+      updateOvertimeSection(summary, currentTotalMinutes, scheduledDays, actualDays);
     } else {
       summarySection.style.display = 'none';
+      // サマリーがない場合は残業セクションも非表示
+      const overtimeSection = infoPanel.querySelector('#ts-overtime-section');
+      if (overtimeSection) overtimeSection.style.display = 'none';
+    }
+  }
+
+  // 残業警告セクションの更新
+  function updateOvertimeSection(summary, currentTotalMinutes, scheduledDays, actualDays) {
+    if (!infoPanel) return;
+
+    const overtimeSection = infoPanel.querySelector('#ts-overtime-section');
+    if (!overtimeSection) return;
+
+    const STANDARD_HOURS_PER_DAY = 8 * 60; // 8時間 = 480分
+    const OVERTIME_LIMIT = 45 * 60; // 45時間 = 2700分
+
+    // 実出勤日数が0の場合は非表示
+    if (!actualDays || actualDays === 0) {
+      overtimeSection.style.display = 'none';
+      return;
+    }
+
+    overtimeSection.style.display = 'block';
+
+    // 各要素を取得
+    const actualDaysEl = infoPanel.querySelector('#ts-actual-days');
+    const actualHoursEl = infoPanel.querySelector('#ts-actual-hours');
+    const avgHoursPerDayEl = infoPanel.querySelector('#ts-avg-hours-per-day');
+    const avgOvertimePerDayEl = infoPanel.querySelector('#ts-avg-overtime-per-day');
+    const monthlyOvertimeEl = infoPanel.querySelector('#ts-monthly-overtime');
+    const overtimeForecastEl = infoPanel.querySelector('#ts-overtime-forecast');
+    const overtimeAlertEl = infoPanel.querySelector('#ts-overtime-alert');
+
+    // 勤務日数
+    actualDaysEl.textContent = `${actualDays}日`;
+
+    // 勤務時間（リアルタイム）
+    actualHoursEl.textContent = formatMinutesToTime(currentTotalMinutes);
+
+    // 平均/日
+    const avgMinutesPerDay = Math.round(currentTotalMinutes / actualDays);
+    avgHoursPerDayEl.textContent = formatMinutesToTime(avgMinutesPerDay);
+
+    // 残業/日
+    const avgOvertimePerDay = avgMinutesPerDay - STANDARD_HOURS_PER_DAY;
+    avgOvertimePerDayEl.textContent = avgOvertimePerDay >= 0
+      ? `+${formatMinutesToTime(avgOvertimePerDay)}`
+      : formatMinutesToTime(avgOvertimePerDay);
+
+    // 残業/日の色分け
+    if (avgOvertimePerDay >= 120) { // 2時間以上
+      avgOvertimePerDayEl.style.color = '#d93025';
+    } else if (avgOvertimePerDay >= 60) { // 1-2時間
+      avgOvertimePerDayEl.style.color = '#ea8600';
+    } else if (avgOvertimePerDay > 0) { // 0-1時間
+      avgOvertimePerDayEl.style.color = '#f9ab00';
+    } else {
+      avgOvertimePerDayEl.style.color = '#0d904f';
+    }
+
+    // 月間残業 = 総労働時間 - (勤務日数 × 8時間)
+    const monthlyOvertime = currentTotalMinutes - (actualDays * STANDARD_HOURS_PER_DAY);
+    monthlyOvertimeEl.textContent = monthlyOvertime >= 0
+      ? `+${formatMinutesToTime(monthlyOvertime)}`
+      : formatMinutesToTime(monthlyOvertime);
+
+    // 月間残業の色分け
+    if (monthlyOvertime > OVERTIME_LIMIT) {
+      monthlyOvertimeEl.style.color = '#d93025';
+    } else if (monthlyOvertime > OVERTIME_LIMIT * 0.8) { // 36時間以上
+      monthlyOvertimeEl.style.color = '#ea8600';
+    } else {
+      monthlyOvertimeEl.style.color = '#666';
+    }
+
+    // 月末予測 = 残業/日 × 所定勤務日数
+    const forecastOvertime = avgOvertimePerDay * scheduledDays;
+    overtimeForecastEl.textContent = forecastOvertime >= 0
+      ? `+${formatMinutesToTime(forecastOvertime)}`
+      : formatMinutesToTime(forecastOvertime);
+
+    // 月末予測の色分けとアラート
+    if (monthlyOvertime > OVERTIME_LIMIT) {
+      // 既に45時間超過
+      overtimeForecastEl.style.color = '#d93025';
+      overtimeAlertEl.style.display = 'block';
+      overtimeAlertEl.style.background = '#d93025';
+      overtimeAlertEl.textContent = '🚨 月45時間超過中！';
+    } else if (forecastOvertime > OVERTIME_LIMIT) {
+      // 超過見込み
+      overtimeForecastEl.style.color = '#ea8600';
+      overtimeAlertEl.style.display = 'block';
+      overtimeAlertEl.style.background = '#ea8600';
+      overtimeAlertEl.textContent = '⚠️ 45時間超過見込み';
+    } else {
+      overtimeForecastEl.style.color = '#0d904f';
+      overtimeAlertEl.style.display = 'none';
     }
   }
 
