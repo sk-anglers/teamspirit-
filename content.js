@@ -825,7 +825,7 @@
       overtimeForecastEl.style.color = '#d93025';
       overtimeAlertEl.style.display = 'block';
       overtimeAlertEl.style.background = '#d93025';
-      overtimeAlertEl.textContent = `🚨 ${overtimeHours}時間超過中！`;
+      overtimeAlertEl.textContent = `🚨 月${overtimeHours}時間超過中！`;
     } else if (forecastOvertime > OVERTIME_LIMIT) {
       // 超過見込み
       overtimeForecastEl.style.color = '#ea8600';

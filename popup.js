@@ -521,7 +521,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const overtimeHours = Math.floor(monthlyOvertime / 60);
       overtimeForecastEl.classList.add('overtime-value', 'danger');
       overtimeAlert.classList.remove('hidden', 'warning');
-      overtimeAlert.textContent = `🚨 ${overtimeHours}時間超過中！`;
+      overtimeAlert.textContent = `🚨 月${overtimeHours}時間超過中！`;
       overtimeBadge.classList.add('danger');
       overtimeBadge.textContent = '超過中';
     } else if (forecastOvertime > OVERTIME_LIMIT) {
