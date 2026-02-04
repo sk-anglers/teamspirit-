@@ -1,9 +1,8 @@
 // TeamSpirit Assistant - Background Service Worker
 // Handles data fetching and message passing
 
-const TEAMSPIRIT_URL = 'https://teamspirit-74532.lightning.force.com/lightning/page/home';
-const TEAMSPIRIT_ATTENDANCE_URL = 'https://teamspirit-74532.lightning.force.com/lightning/n/teamspirit__AtkWorkTimeTab';
-const HOLIDAYS_API_URL = 'https://holidays-jp.github.io/api/v1/date.json';
+// URL定数は config.js の CONFIG オブジェクトで一元管理
+importScripts('config.js');
 
 // ==================== 祝日API ====================
 
@@ -21,7 +20,7 @@ async function getHolidays() {
 
     // APIから取得
     console.log('[TS-Assistant] 祝日APIからデータ取得中...');
-    const res = await fetch(HOLIDAYS_API_URL);
+    const res = await fetch(CONFIG.HOLIDAYS_API_URL);
     if (!res.ok) {
       throw new Error(`HTTP error: ${res.status}`);
     }
@@ -45,7 +44,8 @@ async function getHolidays() {
 
 // 勤務日かどうか判定（平日 AND 非祝日）
 function isWorkingDay(dateStr, holidays) {
-  const date = new Date(dateStr);
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
   const dayOfWeek = date.getDay();
 
   // 土日は勤務日ではない
@@ -64,7 +64,8 @@ function isWorkingDay(dateStr, holidays) {
 // 曜日を取得
 function getDayOfWeekStr(dateStr) {
   const days = ['日', '月', '火', '水', '木', '金', '土'];
-  const date = new Date(dateStr);
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
   return days[date.getDay()];
 }
 
@@ -77,8 +78,15 @@ function getTodayDateStr() {
 // Wait for tab to finish loading
 function waitForTabLoad(tabId) {
   return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(listener);
+      console.log('[TS-Assistant] waitForTabLoad タイムアウト（60秒）');
+      resolve();
+    }, 60000);
+
     function listener(id, changeInfo) {
       if (id === tabId && changeInfo.status === 'complete') {
+        clearTimeout(timeout);
         chrome.tabs.onUpdated.removeListener(listener);
         resolve();
       }
@@ -130,24 +138,57 @@ async function fetchAllAttendanceDataInternal() {
     console.log('[TS-Assistant] 全データ取得開始（1タブ）');
 
     // Open attendance page in background
-    tempTab = await chrome.tabs.create({ url: TEAMSPIRIT_ATTENDANCE_URL, active: false });
+    tempTab = await chrome.tabs.create({ url: CONFIG.TEAMSPIRIT_ATTENDANCE_URL, active: false });
     await waitForTabLoad(tempTab.id);
-    await new Promise(r => setTimeout(r, 8000));
 
-    const iframeCheck = await chrome.scripting.executeScript({
-      target: { tabId: tempTab.id },
-      func: () => ({ count: document.querySelectorAll('iframe').length })
-    });
-    if (iframeCheck[0]?.result?.count > 0) {
-      await new Promise(r => setTimeout(r, 3000));
+    // ポーリング方式: DOM要素の出現を500ms間隔で確認（最大60秒）
+    const pollStartTime = Date.now();
+    const POLL_INTERVAL = 500;
+    const POLL_TIMEOUT = 60000;
+    let dataReady = false;
+
+    while (Date.now() - pollStartTime < POLL_TIMEOUT) {
+      try {
+        const check = await chrome.scripting.executeScript({
+          target: { tabId: tempTab.id, allFrames: true },
+          func: () => {
+            // ttvTimeSt で始まるIDの要素（勤怠データの日付行）があるか確認
+            const el = document.querySelector('[id^="ttvTimeSt"]');
+            return { ready: !!el };
+          }
+        });
+        if (check.some(r => r.result?.ready)) {
+          dataReady = true;
+          break;
+        }
+      } catch (e) {
+        // タブがまだ読み込み中の場合は無視
+      }
+      await new Promise(r => setTimeout(r, POLL_INTERVAL));
     }
 
-    // 当月の日付リストを生成
+    if (dataReady) {
+      console.log('[TS-Assistant] データ準備完了（' + (Date.now() - pollStartTime) + 'ms）');
+    } else {
+      console.log('[TS-Assistant] ポーリングタイムアウト（60秒）、フォールバック処理に移行');
+    }
+
+    // タブがまだ存在するか確認
+    try {
+      await chrome.tabs.get(tempTab.id);
+    } catch (e) {
+      console.log('[TS-Assistant] タブが閉じられました。処理を中断します。');
+      tempTab = null;
+      return null;
+    }
+
+    // 当月の日付リストを生成（月末まで）
     const today = new Date();
     const year = today.getFullYear();
     const month = today.getMonth();
+    const lastDay = new Date(year, month + 1, 0).getDate(); // 月末日を取得
     const dateList = [];
-    for (let day = 1; day <= today.getDate(); day++) {
+    for (let day = 1; day <= lastDay; day++) {
       dateList.push(`${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`);
     }
     const todayStr = getTodayDateStr();
@@ -166,7 +207,7 @@ async function fetchAllAttendanceDataInternal() {
         try {
           let foundAnyData = false;
 
-          // 月間データを取得
+          // 月間データを取得（IDで要素を探す）
           for (const dateStr of dateList) {
             const dayData = { date: dateStr, clockIn: null, clockOut: null, isHoliday: false };
             const clockInEl = document.getElementById(`ttvTimeSt${dateStr}`);
@@ -187,11 +228,13 @@ async function fetchAllAttendanceDataInternal() {
                     dayData.clockOut = outText;
                   }
                 }
+                // 行のクラスで休日判定（土日・祝日）
                 if ((row.className || '').includes('rowcnt')) {
                   dayData.isHoliday = true;
                 }
               }
             } else {
+              // 要素が見つからない = 勤怠入力欄がない = 休日
               dayData.isHoliday = true;
             }
 
@@ -233,6 +276,58 @@ async function fetchAllAttendanceDataInternal() {
             foundAnyData = true;
           }
 
+          // 残り勤務日数を計算（今日以降の所定出勤日をカウント）
+          let remainingWorkdays = 0;
+          const todayDate = new Date(todayStr);
+          for (const dateStr of Object.keys(result.monthlyData)) {
+            const day = result.monthlyData[dateStr];
+            const dayDate = new Date(dateStr);
+            // 今日以降の所定出勤日をカウント（今日を含む）
+            if (dayDate >= todayDate && !day.isHoliday) {
+              remainingWorkdays++;
+            }
+          }
+          result.remainingWorkdays = remainingWorkdays;
+
+          // 退勤打刻済み日数と日次残業合計を計算（当日は除外）
+          let completedDays = 0;
+          let totalDailyOvertimeMinutes = 0;
+          const STANDARD_MINUTES_PER_DAY = 8 * 60; // 8時間 = 480分
+          const BREAK_MINUTES = 60; // 休憩1時間
+
+          for (const dateStr of Object.keys(result.monthlyData)) {
+            // 当日は除外（勤務時間が確定していないため）
+            if (dateStr === todayStr) {
+              continue;
+            }
+
+            const day = result.monthlyData[dateStr];
+            // 退勤打刻がある日のみカウント（確定した勤務日）
+            if (day.clockIn && day.clockOut) {
+              completedDays++;
+
+              // 勤務時間を計算（clockOut - clockIn - 休憩）
+              const parseTime = (timeStr) => {
+                const parts = timeStr.split(':');
+                return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
+              };
+              const clockInMinutes = parseTime(day.clockIn);
+              const clockOutMinutes = parseTime(day.clockOut);
+              // 実勤務時間 = 退勤 - 出勤 - 休憩（6時間以上の場合）
+              let workingMinutes = clockOutMinutes - clockInMinutes;
+              if (workingMinutes >= 6 * 60) {
+                workingMinutes -= BREAK_MINUTES;
+              }
+
+              // 日次残業 = max(0, 勤務時間 - 8時間)
+              // 8時間未満の日は0として扱う（マイナスにしない）
+              const dailyOvertime = Math.max(0, workingMinutes - STANDARD_MINUTES_PER_DAY);
+              totalDailyOvertimeMinutes += dailyOvertime;
+            }
+          }
+          result.completedDays = completedDays;
+          result.totalDailyOvertimeMinutes = totalDailyOvertimeMinutes;
+
           result.success = foundAnyData;
           return result;
         } catch (e) {
@@ -243,7 +338,11 @@ async function fetchAllAttendanceDataInternal() {
     });
 
     // Close temp tab
-    await chrome.tabs.remove(tempTab.id);
+    try {
+      await chrome.tabs.remove(tempTab.id);
+    } catch (e) {
+      // タブが既に閉じられている場合は無視
+    }
     tempTab = null;
 
     // Find best result from frames
@@ -272,6 +371,19 @@ async function fetchAllAttendanceDataInternal() {
             d.setHours(parseInt(parts[0], 10), parseInt(parts[1], 10), 0, 0);
             clockOutTimestamp = d.getTime();
           }
+        }
+
+        // remainingWorkdays, completedDays, totalDailyOvertimeMinutesをsummaryに追加
+        if (data.summary) {
+          data.summary.remainingWorkdays = data.remainingWorkdays;
+          data.summary.completedDays = data.completedDays;
+          data.summary.totalDailyOvertimeMinutes = data.totalDailyOvertimeMinutes;
+        }
+        // todayData.summaryにも追加（content.jsで使用）
+        if (data.todayData && data.todayData.summary) {
+          data.todayData.summary.remainingWorkdays = data.remainingWorkdays;
+          data.todayData.summary.completedDays = data.completedDays;
+          data.todayData.summary.totalDailyOvertimeMinutes = data.totalDailyOvertimeMinutes;
         }
 
         // Save to unified storage
@@ -332,8 +444,8 @@ async function detectMissedPunches() {
     const todayStr = getTodayDateStr();
 
     for (const [dateStr, dayData] of Object.entries(monthlyData)) {
-      // 本日は判定対象外（前日分までを判定）
-      if (dateStr === todayStr) {
+      // 今日以降は判定対象外（前日分までを判定）
+      if (dateStr >= todayStr) {
         continue;
       }
 
@@ -414,7 +526,7 @@ chrome.runtime.onInstalled.addListener(() => {
 // Handle messages from popup or content script
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'openTeamSpirit') {
-    chrome.tabs.create({ url: TEAMSPIRIT_URL });
+    chrome.tabs.create({ url: CONFIG.TEAMSPIRIT_URL });
     sendResponse({ success: true });
     return true;
   }

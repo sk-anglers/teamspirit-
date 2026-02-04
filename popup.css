@@ -482,9 +482,17 @@ h1 {
   border-radius: 4px;
 }
 
+.summary-row.highlight.danger {
+  background: #fde7e7;
+}
+
 .summary-row.highlight .summary-label {
   color: #0070d2;
   font-weight: bold;
+}
+
+.summary-row.highlight.danger .summary-label {
+  color: #c23934;
 }
 
 .summary-row.highlight .summary-value {
@@ -603,18 +611,22 @@ h1 {
   background: #e65100;
 }
 
-.overtime-value.danger {
+.overtime-value.danger,
+.summary-row.highlight .summary-value.overtime-value.danger {
   color: #c23934;
 }
 
-.overtime-value.warning {
+.overtime-value.warning,
+.summary-row.highlight .summary-value.overtime-value.warning {
   color: #e65100;
 }
 
-.overtime-value.caution {
+.overtime-value.caution,
+.summary-row.highlight .summary-value.overtime-value.caution {
   color: #f9ab00;
 }
 
-.overtime-value.safe {
+.overtime-value.safe,
+.summary-row.highlight .summary-value.overtime-value.safe {
   color: #2e844a;
 }

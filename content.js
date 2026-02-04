@@ -25,64 +25,9 @@
   let infoPanel = null;
   let retryCount = 0;
   let cachedData = null;
+  let updateIntervalId = null;
 
-  // ==================== Location Mapping (for punch) ====================
-  const LOCATION_MAP = {
-    'remote': 'リモート',
-    'office': 'オフィス',
-    'direct-to-office': '直行→オフィス',
-    'office-to-direct': 'オフィス→直帰',
-    'direct': '直行直帰'
-  };
-
-  // ==================== Utility Functions ====================
-
-  function formatDuration(ms) {
-    if (!ms || ms < 0) return '--:--:--';
-    const totalSeconds = Math.floor(ms / 1000);
-    const h = Math.floor(totalSeconds / 3600);
-    const m = Math.floor((totalSeconds % 3600) / 60);
-    const s = totalSeconds % 60;
-    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-  }
-
-  function formatTimeShort(date) {
-    if (!date) return '--:--';
-    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-  }
-
-  function parseTimeToMinutes(timeStr) {
-    if (!timeStr || timeStr === '--:--') return null;
-    const isNegative = timeStr.startsWith('-');
-    const cleanTime = timeStr.replace('-', '');
-    const parts = cleanTime.split(':');
-    if (parts.length < 2) return null;
-    const hours = parseInt(parts[0], 10);
-    const minutes = parseInt(parts[1], 10);
-    if (isNaN(hours) || isNaN(minutes)) return null;
-    return isNegative ? -(hours * 60 + minutes) : (hours * 60 + minutes);
-  }
-
-  function formatMinutesToTime(totalMinutes) {
-    if (totalMinutes === null || totalMinutes === undefined) return '--:--';
-    const isNegative = totalMinutes < 0;
-    const absMinutes = Math.abs(totalMinutes);
-    const hours = Math.floor(absMinutes / 60);
-    const minutes = absMinutes % 60;
-    return isNegative ? `-${hours}:${String(minutes).padStart(2, '0')}` : `${hours}:${String(minutes).padStart(2, '0')}`;
-  }
-
-  function parseTimeToDate(timeStr) {
-    if (!timeStr || timeStr === '--:--') return null;
-    const parts = timeStr.split(':');
-    if (parts.length < 2) return null;
-    const hours = parseInt(parts[0], 10);
-    const minutes = parseInt(parts[1], 10);
-    if (isNaN(hours) || isNaN(minutes)) return null;
-    const date = new Date();
-    date.setHours(hours, minutes, 0, 0);
-    return date;
-  }
+  // Utility functions and LOCATION_MAP are now in utils.js (loaded before content.js)
 
   // ==================== Page Detection (for punch) ====================
 
@@ -583,8 +528,12 @@
           </div>
           <div style="border-top:1px solid #e0e0e0; margin:6px 0;"></div>
           <div style="display:flex; justify-content:space-between; margin-bottom:3px; gap:10px;">
+            <span style="color:#666;">8h超過累計</span>
+            <span style="font-weight:600;" id="ts-daily-excess-total">--:--</span>
+          </div>
+          <div style="display:flex; justify-content:space-between; margin-bottom:3px; gap:10px;">
             <span style="color:#666;">月間残業</span>
-            <span style="font-weight:600;" id="ts-monthly-overtime">--:--</span>
+            <span style="font-weight:600;" id="ts-legal-overtime">--:--</span>
           </div>
           <div style="display:flex; justify-content:space-between; margin-bottom:3px; gap:10px;">
             <span style="color:#666;">残業上限</span>
@@ -686,10 +635,22 @@
       const totalHoursEl = infoPanel.querySelector('#ts-total-hours');
 
       let currentTotalMinutes = totalMinutes || 0;
-      if (data.isWorking && data.clockInTime && totalMinutes !== null) {
+      let todayWorkingMinutes = 0;
+      if (data.clockInTime && totalMinutes !== null) {
         const clockInDate = parseTimeToDate(data.clockInTime);
         if (clockInDate) {
-          currentTotalMinutes += Math.floor((Date.now() - clockInDate.getTime()) / 60000);
+          if (data.isWorking) {
+            // Currently working: add time from clock-in to now
+            todayWorkingMinutes = Math.floor((Date.now() - clockInDate.getTime()) / 60000);
+            currentTotalMinutes += todayWorkingMinutes;
+          } else if (data.clockOutTime) {
+            // Clocked out: add time from clock-in to clock-out
+            const clockOutDate = parseTimeToDate(data.clockOutTime);
+            if (clockOutDate) {
+              todayWorkingMinutes = Math.floor((clockOutDate.getTime() - clockInDate.getTime()) / 60000);
+              currentTotalMinutes += todayWorkingMinutes;
+            }
+          }
         }
       }
 
@@ -706,10 +667,21 @@
       }
 
       const scheduledDays = parseInt(summary.scheduledDays, 10);
-      const actualDays = parseInt(summary.actualDays, 10);
+      let actualDays = parseInt(summary.actualDays, 10);
+      // Fix: 今日の勤務があれば actualDays を +1 する
+      // TeamSpirit の actualDays は前日までの累計なので、今日分を加算
+      if (todayWorkingMinutes > 0 || data.isWorking) {
+        actualDays += 1;
+      }
+      // remainingWorkdaysがあればそれを使用、なければ従来の計算
+      const remainingWorkdays = parseInt(summary.remainingWorkdays, 10);
+      const remainingDays = !isNaN(remainingWorkdays) ? remainingWorkdays : (scheduledDays - actualDays);
 
-      if (!isNaN(scheduledDays) && !isNaN(actualDays)) {
-        const remainingDays = scheduledDays - actualDays;
+      // 退勤打刻済み日数と日次残業合計を取得（残業/日の計算に使用）
+      const completedDays = parseInt(summary.completedDays, 10);
+      const totalDailyOvertimeMinutes = parseInt(summary.totalDailyOvertimeMinutes, 10);
+
+      if (!isNaN(remainingDays)) {
         infoPanel.querySelector('#ts-remaining-days').textContent = `${remainingDays}日`;
 
         if (remainingDays > 0 && scheduledMinutes !== null) {
@@ -734,7 +706,7 @@
       }
 
       // 残業警告セクション更新
-      updateOvertimeSection(summary, currentTotalMinutes, scheduledDays, actualDays);
+      updateOvertimeSection(summary, currentTotalMinutes, scheduledDays, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes);
     } else {
       summarySection.style.display = 'none';
       // サマリーがない場合は残業セクションも非表示
@@ -743,30 +715,31 @@
     }
   }
 
-  // 残業警告セクションの更新
-  function updateOvertimeSection(summary, currentTotalMinutes, scheduledDays, actualDays) {
+  // 残業警告セクションの更新 (uses shared calculateOvertimeData)
+  function updateOvertimeSection(summary, currentTotalMinutes, scheduledDays, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes) {
     if (!infoPanel) return;
 
     const overtimeSection = infoPanel.querySelector('#ts-overtime-section');
     if (!overtimeSection) return;
 
-    const STANDARD_HOURS_PER_DAY = 8 * 60; // 8時間 = 480分
-    const OVERTIME_LIMIT = 45 * 60; // 45時間 = 2700分
-
-    // 実出勤日数が0の場合は非表示
-    if (!actualDays || actualDays === 0) {
+    // actualDaysが0でも、今日の勤務時間があれば表示する（月初めの対応）
+    if ((!actualDays || actualDays === 0) && todayWorkingMinutes === 0) {
       overtimeSection.style.display = 'none';
       return;
     }
+    // Note: actualDays の補正は呼び出し元（665-670行）で実施済み
 
     overtimeSection.style.display = 'block';
+
+    const data = calculateOvertimeData(currentTotalMinutes, actualDays, scheduledMinutes, todayWorkingMinutes, remainingDays, completedDays, totalDailyOvertimeMinutes);
 
     // 各要素を取得
     const actualDaysEl = infoPanel.querySelector('#ts-actual-days');
     const actualHoursEl = infoPanel.querySelector('#ts-actual-hours');
     const avgHoursPerDayEl = infoPanel.querySelector('#ts-avg-hours-per-day');
     const avgOvertimePerDayEl = infoPanel.querySelector('#ts-avg-overtime-per-day');
-    const monthlyOvertimeEl = infoPanel.querySelector('#ts-monthly-overtime');
+    const dailyExcessTotalEl = infoPanel.querySelector('#ts-daily-excess-total');
+    const legalOvertimeEl = infoPanel.querySelector('#ts-legal-overtime');
     const overtimeForecastEl = infoPanel.querySelector('#ts-overtime-forecast');
     const overtimeAlertEl = infoPanel.querySelector('#ts-overtime-alert');
 
@@ -777,65 +750,75 @@
     actualHoursEl.textContent = formatMinutesToTime(currentTotalMinutes);
 
     // 平均/日
-    const avgMinutesPerDay = Math.round(currentTotalMinutes / actualDays);
-    avgHoursPerDayEl.textContent = formatMinutesToTime(avgMinutesPerDay);
+    avgHoursPerDayEl.textContent = formatMinutesToTime(data.avgMinutesPerDay);
 
     // 残業/日
-    const avgOvertimePerDay = avgMinutesPerDay - STANDARD_HOURS_PER_DAY;
-    avgOvertimePerDayEl.textContent = avgOvertimePerDay >= 0
-      ? `+${formatMinutesToTime(avgOvertimePerDay)}`
-      : formatMinutesToTime(avgOvertimePerDay);
+    avgOvertimePerDayEl.textContent = data.avgOvertimePerDay >= 0
+      ? `+${formatMinutesToTime(data.avgOvertimePerDay)}`
+      : formatMinutesToTime(data.avgOvertimePerDay);
 
-    // 残業/日の色分け
-    if (avgOvertimePerDay >= 120) { // 2時間以上
-      avgOvertimePerDayEl.style.color = '#d93025';
-    } else if (avgOvertimePerDay >= 60) { // 1-2時間
-      avgOvertimePerDayEl.style.color = '#ea8600';
-    } else if (avgOvertimePerDay > 0) { // 0-1時間
-      avgOvertimePerDayEl.style.color = '#f9ab00';
-    } else {
-      avgOvertimePerDayEl.style.color = '#0d904f';
-    }
+    // 残業/日の色分け（inline style for content script）
+    const avgOvertimeColors = { danger: '#d93025', warning: '#ea8600', caution: '#f9ab00', safe: '#0d904f' };
+    avgOvertimePerDayEl.style.color = avgOvertimeColors[data.avgOvertimeLevel];
 
-    // 月間残業 = 総労働時間 - (勤務日数 × 8時間)
-    const monthlyOvertime = currentTotalMinutes - (actualDays * STANDARD_HOURS_PER_DAY);
-    monthlyOvertimeEl.textContent = monthlyOvertime >= 0
-      ? `+${formatMinutesToTime(monthlyOvertime)}`
-      : formatMinutesToTime(monthlyOvertime);
+    // 8h超過累計（健康管理指標）
+    dailyExcessTotalEl.textContent = `+${formatMinutesToTime(data.dailyExcessTotal)}`;
+    const dailyExcessColors = { danger: '#d93025', warning: '#ea8600', normal: '#666' };
+    dailyExcessTotalEl.style.color = dailyExcessColors[data.dailyExcessLevel];
 
-    // 月間残業の色分け
-    if (monthlyOvertime > OVERTIME_LIMIT) {
-      monthlyOvertimeEl.style.color = '#d93025';
-    } else if (monthlyOvertime > OVERTIME_LIMIT * 0.8) { // 36時間以上
-      monthlyOvertimeEl.style.color = '#ea8600';
-    } else {
-      monthlyOvertimeEl.style.color = '#666';
-    }
+    // 月間残業（法的）
+    legalOvertimeEl.textContent = `+${formatMinutesToTime(data.legalOvertime)}`;
+    const legalColors = { danger: '#d93025', warning: '#ea8600', normal: '#666' };
+    legalOvertimeEl.style.color = legalColors[data.legalOvertimeLevel];
 
-    // 月末予測 = 残業/日 × 所定勤務日数
-    const forecastOvertime = avgOvertimePerDay * scheduledDays;
-    overtimeForecastEl.textContent = forecastOvertime >= 0
-      ? `+${formatMinutesToTime(forecastOvertime)}`
-      : formatMinutesToTime(forecastOvertime);
+    // 月末予測
+    overtimeForecastEl.textContent = data.forecastOvertime >= 0
+      ? `+${formatMinutesToTime(data.forecastOvertime)}`
+      : formatMinutesToTime(data.forecastOvertime);
 
     // 月末予測の色分けとアラート
-    if (monthlyOvertime > OVERTIME_LIMIT) {
-      // 既に45時間超過
-      const overtimeHours = Math.floor(monthlyOvertime / 60);
+    if (data.forecastLevel === 'exceeded') {
       overtimeForecastEl.style.color = '#d93025';
       overtimeAlertEl.style.display = 'block';
       overtimeAlertEl.style.background = '#d93025';
-      overtimeAlertEl.textContent = `🚨 月${overtimeHours}時間超過中！`;
-    } else if (forecastOvertime > OVERTIME_LIMIT) {
-      // 超過見込み
-      overtimeForecastEl.style.color = '#ea8600';
+      overtimeAlertEl.textContent = data.alertText;
+    } else if (data.forecastLevel === 'warning') {
+      overtimeForecastEl.style.color = '#d93025';
       overtimeAlertEl.style.display = 'block';
       overtimeAlertEl.style.background = '#ea8600';
-      overtimeAlertEl.textContent = '⚠️ 45時間超過見込み';
+      overtimeAlertEl.textContent = data.alertText;
     } else {
       overtimeForecastEl.style.color = '#0d904f';
       overtimeAlertEl.style.display = 'none';
     }
+  }
+
+  // ==================== Panel Common ====================
+
+  // パネル初期化後の共通処理（データ読み込み・タイマー開始）
+  function initPanelData() {
+    loadData().then(() => updateDisplay());
+    loadTodayWorkday();
+    loadMissedPunchData();
+
+    // 既存のタイマーをクリアしてから新規作成
+    if (updateIntervalId) {
+      clearInterval(updateIntervalId);
+    }
+    updateIntervalId = setInterval(updateDisplay, 1000);
+  }
+
+  // 既存のパネルをクリーンアップ
+  function cleanupPanel() {
+    if (updateIntervalId) {
+      clearInterval(updateIntervalId);
+      updateIntervalId = null;
+    }
+    infoPanel = null;
+    const existingDisplay = document.getElementById('ts-info-display');
+    if (existingDisplay) existingDisplay.remove();
+    const existingContainer = document.getElementById('ts-info-container');
+    if (existingContainer) existingContainer.remove();
   }
 
   // ==================== Panel Injection ====================
@@ -853,6 +836,10 @@
       retryCount++;
       if (retryCount < MAX_RETRIES) {
         setTimeout(findAndInjectPanelInMainFrame, CHECK_INTERVAL);
+      } else {
+        // リトライ上限到達 → フォールバック（固定位置表示）
+        console.log('[TS-Assistant] リトライ上限到達、フォールバック表示');
+        showFixedPanel();
       }
       return;
     }
@@ -887,19 +874,7 @@
     } catch (e) {}
 
     console.log('[TS-Assistant] パネル埋め込み完了');
-
-    loadData().then(() => {
-      updateDisplay();
-    });
-
-    // 本日情報を読み込む
-    loadTodayWorkday();
-
-    // 打刻漏れデータを読み込む
-    loadMissedPunchData();
-
-    // 1秒ごとに更新（現在時刻は常に更新）
-    setInterval(updateDisplay, 1000);
+    initPanelData();
   }
 
   // ==================== Fallback Panel (Main Frame) ====================
@@ -922,17 +897,7 @@
       min-width: 200px;
     `;
     document.body.appendChild(infoPanel);
-
-    loadData().then(() => updateDisplay());
-
-    // 本日情報を読み込む
-    loadTodayWorkday();
-
-    // 打刻漏れデータを読み込む
-    loadMissedPunchData();
-
-    // 1秒ごとに更新（現在時刻は常に更新）
-    setInterval(updateDisplay, 1000);
+    initPanelData();
   }
 
   // ==================== Message Listener (for punch operations) ====================
@@ -998,14 +963,8 @@
     function tryInjectPanel() {
       if (!isExtensionContextValid()) return;
 
-      // 既存のパネルがあれば何もしない
-      if (document.getElementById('ts-info-display')) return;
-
-      // 既存のコンテナがあれば削除（再挿入のため）
-      const existingContainer = document.getElementById('ts-info-container');
-      if (existingContainer) {
-        existingContainer.remove();
-      }
+      // 既存のパネルをクリーンアップ（タイマー・DOM要素・状態変数）
+      cleanupPanel();
 
       retryCount = 0;
       findAndInjectPanelInMainFrame();
@@ -1021,6 +980,11 @@
         lastUrl = location.href;
         console.log('[TS-Assistant] URL変更検出:', location.href);
 
+        // ホーム以外に移動した場合、パネルをクリーンアップ
+        if (!location.href.includes('/lightning/page/home')) {
+          cleanupPanel();
+        }
+
         // ホーム画面に戻った場合、パネルを再挿入
         if (location.href.includes('/lightning/page/home')) {
           setTimeout(tryInjectPanel, 2000);
@@ -1028,18 +992,6 @@
       }
     });
     urlObserver.observe(document.body, { childList: true, subtree: true });
-
-    // 10秒後にまだ表示されていなければフォールバック
-    setTimeout(async () => {
-      try {
-        if (!isExtensionContextValid()) return;
-        if (!document.getElementById('ts-info-display')) {
-          showFixedPanel();
-        }
-      } catch (e) {
-        // Extension context invalidated - ignore
-      }
-    }, 10000);
 
     window.addEventListener('beforeunload', () => {
       try {

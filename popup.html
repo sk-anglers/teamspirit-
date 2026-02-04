@@ -131,21 +131,25 @@
             <span class="summary-label">平均/日</span>
             <span class="summary-value" id="avgHoursPerDay">--:--</span>
           </div>
-          <div class="summary-row highlight">
+          <div class="summary-row">
             <span class="summary-label">残業/日</span>
             <span class="summary-value" id="avgOvertimePerDay">--:--</span>
           </div>
           <div class="summary-divider"></div>
           <div class="summary-row">
+            <span class="summary-label">8h超過累計</span>
+            <span class="summary-value" id="dailyExcessTotal">--:--</span>
+          </div>
+          <div class="summary-row">
             <span class="summary-label">月間残業</span>
-            <span class="summary-value" id="monthlyOvertime">--:--</span>
+            <span class="summary-value" id="legalOvertime">--:--</span>
           </div>
           <div class="summary-row">
             <span class="summary-label">残業上限</span>
             <span class="summary-value">45:00</span>
           </div>
-          <div class="summary-row highlight">
-            <span class="summary-label">月末予測</span>
+          <div class="summary-row highlight" id="forecastRow">
+            <span class="summary-label" id="forecastLabel">月末予測</span>
             <span class="summary-value" id="overtimeForecast">--:--</span>
           </div>
         </div>
@@ -198,6 +202,13 @@
     </div>
   </div>
 
+  <script src="config.js"></script>
+  <script src="utils.js"></script>
+  <script src="overtime-calc.js"></script>
+  <script src="crypto.js"></script>
+  <script src="tab-utils.js"></script>
+  <script src="login.js"></script>
+  <script src="punch.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

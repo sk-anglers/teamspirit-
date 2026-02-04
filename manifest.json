@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "TeamSpirit Assistant",
-  "version": "3.2.0",
+  "version": "3.3.0",
   "description": "TeamSpiritの打刻とホーム画面での勤怠情報表示を行う拡張機能",
   "permissions": [
     "activeTab",
@@ -40,7 +40,7 @@
         "https://*.my.salesforce.com/*",
         "https://*.force.com/*"
       ],
-      "js": ["content.js"],
+      "js": ["config.js", "utils.js", "overtime-calc.js", "content.js"],
       "css": ["content-styles.css"],
       "run_at": "document_idle",
       "all_frames": true
